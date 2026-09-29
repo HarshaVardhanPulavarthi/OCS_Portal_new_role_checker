@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "OCS Role Checker",
+  "version": "1.0.0",
+  "description": "Scrapes and checks for new roles on the OCS portal.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "unlimitedStorage",
+    "notifications"
+  ],
+  "host_permissions": [
+    "*://*/*"
+  ],
+  "action": {
+    "default_popup": "popup/popup.html"
+  },
+  "background": {
+    "service_worker": "background/service-worker.js",
+    "type": "module"
+  }
+}
