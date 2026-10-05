@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>OCS Role Checker</title>
+  <link rel="stylesheet" href="popup.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <h1>OCS ROLE CHECKER</h1>
+      <div id="status-container">
+        Status: <span id="status-text">Detecting OCS...</span>
+      </div>
+    </header>
+
+    <div class="stats">
+      <div class="stat-row">
+        <span>Last checked:</span>
+        <span id="last-checked">Never</span>
+      </div>
+      <div class="stat-row">
+        <span>Roles in last scan:</span>
+        <span id="last-scan-count">0</span>
+      </div>
+    </div>
+
+    <div class="action-buttons" id="main-actions">
+      <button id="check-btn" class="primary-btn">CHECK NEW ROLES</button>
+      <button id="update-btn" class="primary-btn hidden" style="margin-top: 10px; background-color: #28a745;">SAVE NEW
+        DATABASE</button>
+      <button id="manage-hidden-btn" class="primary-btn" style="margin-top: 10px; background-color: #6c757d;">MANAGE HIDDEN ROLES</button>
+    </div>
+
+    <div id="hidden-roles-container" class="hidden" style="margin-top: 15px;">
+      <div class="result-header" style="font-size: 14px; font-weight: bold; margin-bottom: 10px; text-transform: uppercase;">Hidden Roles</div>
+      <div id="hidden-roles-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 10px;">
+        <!-- Hidden roles will be injected here -->
+      </div>
+      <button id="back-btn" class="primary-btn" style="background-color: #333;">BACK</button>
+    </div>
+
+    <div id="progress-container" class="hidden">
+      <div id="progress-text">Detecting OCS table...</div>
+      <div class="loader"></div>
+    </div>
+
+    <div id="results-container" class="hidden">
+      <!-- Results will be injected here -->
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+
+</html>

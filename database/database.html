@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Saved OCS Roles</title>
+  <link rel="stylesheet" href="database.css">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Saved Roles Database</h1>
+      <div class="header-actions">
+        <span id="role-count">Loading...</span>
+        <input type="text" id="search-input" placeholder="Search company or title...">
+      </div>
+    </header>
+
+    <div class="table-container">
+      <table id="roles-table">
+        <thead>
+          <tr>
+            <th>Company</th>
+            <th>Title</th>
+            <th>CTC</th>
+            <th>Eligibility</th>
+            <th>Deadline</th>
+            <th>Registered</th>
+          </tr>
+        </thead>
+        <tbody id="roles-body">
+          <!-- Roles will be populated here -->
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <script src="database.js"></script>
+</body>
+</html>
