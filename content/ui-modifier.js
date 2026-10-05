@@ -4,23 +4,26 @@ let observer = null;
 let showHiddenRoles = false;
 
 // Load state from Chrome Storage
-chrome.storage.local.get(['hiddenRoles', 'roleNotes'], (result) => {
-  hiddenRoles = result.hiddenRoles || [];
-  roleNotes = result.roleNotes || {};
-  initWhenReady();
-});
+const currentUrl = window.location.href.toLowerCase();
+if (currentUrl.includes('ocs') && currentUrl.includes('iith')) {
+  chrome.storage.local.get(['hiddenRoles', 'roleNotes'], (result) => {
+    hiddenRoles = result.hiddenRoles || [];
+    roleNotes = result.roleNotes || {};
+    initWhenReady();
+  });
 
-// Listen for cross-tab or popup changes
-chrome.storage.onChanged.addListener((changes, namespace) => {
-  if (namespace === 'local') {
-    let changed = false;
-    if (changes.hiddenRoles) { hiddenRoles = changes.hiddenRoles.newValue || []; changed = true; }
-    if (changes.roleNotes) { roleNotes = changes.roleNotes.newValue || {}; changed = true; }
-    if (changed) {
-      document.querySelectorAll('.MuiDataGrid-row, [role="row"]').forEach(processRow);
+  // Listen for cross-tab or popup changes
+  chrome.storage.onChanged.addListener((changes, namespace) => {
+    if (namespace === 'local') {
+      let changed = false;
+      if (changes.hiddenRoles) { hiddenRoles = changes.hiddenRoles.newValue || []; changed = true; }
+      if (changes.roleNotes) { roleNotes = changes.roleNotes.newValue || {}; changed = true; }
+      if (changed) {
+        document.querySelectorAll('.MuiDataGrid-row, [role="row"]').forEach(processRow);
+      }
     }
-  }
-});
+  });
+}
 
 let hasRemovedFilters = false;
 

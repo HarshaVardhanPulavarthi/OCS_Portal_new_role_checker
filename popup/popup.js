@@ -22,7 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Check if we are on the OCS page (for UI feedback)
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const currentTab = tabs[0];
-    if (currentTab && currentTab.url && currentTab.url.includes('http')) {
+    if (currentTab && currentTab.url && currentTab.url.toLowerCase().includes('ocs') && currentTab.url.toLowerCase().includes('iith')) {
       statusText.textContent = 'Ready';
       statusText.className = 'success';
     } else {

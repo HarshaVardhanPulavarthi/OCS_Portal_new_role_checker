@@ -58,6 +58,12 @@ async function startScan() {
     if (!tabs || tabs.length === 0) {
       throw new Error("No active tab found.");
     }
+    
+    const tabUrl = tabs[0].url ? tabs[0].url.toLowerCase() : '';
+    if (!tabUrl.includes('ocs') || !tabUrl.includes('iith')) {
+      throw new Error("This extension only works on the OCS IITH portal.");
+    }
+
     const tabId = tabs[0].id;
 
     // Inject the scraper script
