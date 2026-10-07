@@ -29,5 +29,25 @@ Since this extension is loaded manually, follow these steps to install it in Goo
 4. Use the provided buttons to check for roles, save databases, or manage hidden roles.
 
 ## Versions
+- **v3.0 (beta)**: Added Google Calendar Sync integration for applied roles.
 - **v2.0 (main)**: The current version with the latest UI modifications.
 - **v1.0 (v1 branch)**: The initial version of the extension. You can access it via the `v1` branch or the GitHub Releases page.
+
+## Calendar Sync (v3 Beta)
+
+Version 3 introduces the ability to automatically sync PPT and OA schedules to your Google Calendar for companies you've applied to.
+
+**Setup Instructions:**
+1. Open [script.google.com](https://script.google.com/) and create a **New project**.
+2. Copy the entire contents of `sheets/calendar_sync.js` from this repository and paste it into the editor (replace the default code).
+3. Click **Deploy > New deployment** (or Manage deployments > New Version).
+4. Set the **type** to **Web app**.
+5. Set **Execute as** to **Me**.
+6. Set **Who has access** to **Anyone**.
+7. Click **Deploy** (authorize the application if prompted) and copy the **Web app URL**.
+8. Open the OCS Role Checker extension popup. 
+9. Paste your shared OCS Schedule Google Sheet URL into the first box.
+10. Paste your Web app URL into the second box.
+11. Run a scan to find your applied roles, then click **SYNC APPLIED TO CALENDAR**.
+
+*Note: The sync script automatically skips duplicate events and fixes Google Sheets historical date parsing issues (forcing events into the current year).*

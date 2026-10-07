@@ -34,6 +34,14 @@
       <button id="manage-hidden-btn" class="primary-btn" style="margin-top: 10px; background-color: #111;">Manage Hidden Roles</button>
     </div>
 
+    <div class="calendar-sync" style="margin-top: 15px; border-top: 1px solid #333; padding-top: 15px;">
+      <div style="font-size: 12px; margin-bottom: 5px;">Schedule Sheet URL:</div>
+      <input type="text" id="sheet-url" placeholder="Paste Google Sheet URL..." style="width: 100%; box-sizing: border-box; padding: 6px; margin-bottom: 8px; border-radius: 4px; border: 1px solid #555; background: #222; color: white;">
+      <div style="font-size: 12px; margin-bottom: 5px;">Google Apps Script URL:</div>
+      <input type="text" id="script-url" placeholder="Paste Web App URL here..." style="width: 100%; box-sizing: border-box; padding: 6px; margin-bottom: 8px; border-radius: 4px; border: 1px solid #555; background: #222; color: white;">
+      <button id="sync-calendar-btn" class="primary-btn" style="background-color: #0052cc;">SYNC APPLIED TO CALENDAR</button>
+    </div>
+
     <div id="hidden-roles-container" class="hidden" style="margin-top: 15px;">
       <div class="result-header" style="font-size: 14px; font-weight: bold; margin-bottom: 10px; text-transform: uppercase;">Hidden Roles</div>
       <div id="hidden-roles-list" style="max-height: 200px; overflow-y: auto; margin-bottom: 10px;">

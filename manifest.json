@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "OCS Role Checker",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "description": "Scrapes and checks for new roles on the OCS portal.",
   "permissions": [
     "activeTab",

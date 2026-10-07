@@ -9,15 +9,37 @@ document.addEventListener('DOMContentLoaded', () => {
   const lastChecked = document.getElementById('last-checked');
   const lastScanCount = document.getElementById('last-scan-count');
 
+  const scriptUrlInput = document.getElementById('script-url');
+  const sheetUrlInput = document.getElementById('sheet-url');
+  const syncBtn = document.getElementById('sync-calendar-btn');
+
   // Load initial state
-  chrome.storage.local.get(['lastChecked', 'lastScanCount'], (result) => {
+  chrome.storage.local.get(['lastChecked', 'lastScanCount', 'scriptUrl', 'sheetUrl'], (result) => {
     if (result.lastChecked) {
       lastChecked.textContent = new Date(result.lastChecked).toLocaleString();
     }
     if (result.lastScanCount !== undefined) {
       lastScanCount.textContent = result.lastScanCount;
     }
+    if (result.scriptUrl) {
+      scriptUrlInput.value = result.scriptUrl;
+    }
+    if (result.sheetUrl) {
+      sheetUrlInput.value = result.sheetUrl;
+    }
   });
+
+  // Save URLs when they change
+  if (scriptUrlInput) {
+    scriptUrlInput.addEventListener('input', (e) => {
+      chrome.storage.local.set({ scriptUrl: e.target.value.trim() });
+    });
+  }
+  if (sheetUrlInput) {
+    sheetUrlInput.addEventListener('input', (e) => {
+      chrome.storage.local.set({ sheetUrl: e.target.value.trim() });
+    });
+  }
 
   // Check if we are on the OCS page (for UI feedback)
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -217,6 +239,62 @@ document.addEventListener('DOMContentLoaded', () => {
         item.appendChild(info);
         item.appendChild(unhideBtn);
         hiddenRolesList.appendChild(item);
+      });
+    });
+  }
+
+  // --- Calendar Sync ---
+  if (syncBtn) {
+    syncBtn.addEventListener('click', () => {
+      const url = scriptUrlInput.value.trim();
+      const sheetUrl = sheetUrlInput.value.trim();
+      
+      if (!url || !sheetUrl) {
+        alert('Please paste both the Schedule Sheet URL and your Web App URL.');
+        return;
+      }
+
+      syncBtn.disabled = true;
+      syncBtn.textContent = 'SYNCING...';
+
+      chrome.storage.local.get(['allRoles'], (result) => {
+        const roles = result.allRoles || [];
+        
+        // Filter roles that the user applied to
+        const appliedRoles = roles.filter(r => 
+          (r.registered && r.registered.toUpperCase() === 'YES') || 
+          (r.applied && r.applied.toUpperCase() === 'YES')
+        );
+
+        if (appliedRoles.length === 0) {
+          alert('No applied roles found. Make sure you have scanned the portal first.');
+          syncBtn.disabled = false;
+          syncBtn.textContent = 'SYNC APPLIED TO CALENDAR';
+          return;
+        }
+
+        const companies = [...new Set(appliedRoles.map(r => r.company))];
+
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = url;
+        form.target = '_blank'; // Opens the Apps Script response in a new tab
+        
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'payload';
+        input.value = JSON.stringify({ companies: companies, sheetUrl: sheetUrl });
+        
+        form.appendChild(input);
+        document.body.appendChild(form);
+        form.submit();
+        
+        // Cleanup
+        setTimeout(() => {
+          document.body.removeChild(form);
+          syncBtn.disabled = false;
+          syncBtn.textContent = 'SYNC APPLIED TO CALENDAR';
+        }, 1000);
       });
     });
   }
