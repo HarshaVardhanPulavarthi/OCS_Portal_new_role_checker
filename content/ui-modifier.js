@@ -497,10 +497,87 @@ function injectFloatingActionUI() {
     document.querySelectorAll('.MuiDataGrid-row, [role="row"]').forEach(processRow);
   });
 
+  // 5. Subtle Vertical Divider
+  const divider = document.createElement('div');
+  Object.assign(divider.style, {
+    width: '1px',
+    height: '20px',
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    margin: '0 2px'
+  });
+
+  // Helper for small action circle buttons
+  function createScrollNavBtn(id, title, svgIcon, onClick) {
+    const btn = document.createElement('button');
+    btn.id = id;
+    btn.title = title;
+    btn.innerHTML = svgIcon;
+    Object.assign(btn.style, {
+      width: '35px',
+      height: '35px',
+      minWidth: '35px',
+      borderRadius: '50%',
+      backgroundColor: '#18181b',
+      color: '#e4e4e7',
+      border: '1px solid #33333d',
+      boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+      cursor: 'pointer',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      transition: 'all 0.2s ease',
+      padding: '0',
+      outline: 'none'
+    });
+
+    btn.addEventListener('mouseenter', () => {
+      btn.style.transform = 'translateY(-2px)';
+      btn.style.borderColor = '#4f4f5a';
+      btn.style.backgroundColor = '#27272a';
+      btn.style.color = '#ffffff';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.transform = 'translateY(0)';
+      btn.style.borderColor = '#33333d';
+      btn.style.backgroundColor = '#18181b';
+      btn.style.color = '#e4e4e7';
+    });
+    btn.addEventListener('click', onClick);
+    return btn;
+  }
+
+  // 6. Go to Top Button
+  const scrollTopBtn = createScrollNavBtn(
+    'ocs-scroll-top-btn',
+    'Scroll to top of page',
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
+    () => {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      const scroller = document.querySelector('.MuiDataGrid-virtualScroller');
+      if (scroller) scroller.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  );
+
+  // 7. Go to Bottom Button
+  const scrollBottomBtn = createScrollNavBtn(
+    'ocs-scroll-bottom-btn',
+    'Scroll to bottom of page',
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg>',
+    () => {
+      const maxScroll = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+      window.scrollTo({ top: maxScroll, behavior: 'smooth' });
+      const scroller = document.querySelector('.MuiDataGrid-virtualScroller');
+      if (scroller) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+    }
+  );
+
   bar.appendChild(totalCountBtn);
   bar.appendChild(scanBtn);
   bar.appendChild(notepadBtn);
   bar.appendChild(toggleBtn);
+  bar.appendChild(divider);
+  bar.appendChild(scrollTopBtn);
+  bar.appendChild(scrollBottomBtn);
   document.body.appendChild(bar);
 }
 
