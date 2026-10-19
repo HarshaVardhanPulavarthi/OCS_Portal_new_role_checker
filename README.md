@@ -22,6 +22,7 @@ A dedicated, dual-column priority notepad docked right inside the portal:
   - **Not Numbered**: Headers never receive number prefixes.
   - **Not Counted**: Lines starting with `#` do not advance company priority numbers and are excluded from company counts on all badges and buttons.
 - **Draggable & Dockable**: Drag by the header bar anywhere across your screen; double-click the header to quickly reset back to default bottom-right position.
+- **Dynamic Corner & Edge Resizing**: Touch/drag any corner (e.g. top-left or bottom-right grips) or border to make the notepad larger or smaller. Your custom dimensions are automatically saved to `chrome.storage.local` and preserved across sessions. Double-click any resize handle to reset to default size.
 - **Instant Auto-Save**: Seamlessly debounced saving to `chrome.storage.local` with real-time `Saving...` and `Saved ✓` visual indicators.
 
 ---

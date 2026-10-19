@@ -2,6 +2,7 @@ let hiddenRoles = [];
 let roleNotes = {}; // Format: { [posting_id]: "note text" }
 let notepadData = { top: '', decent: '' }; // Format: { top: "...", decent: "..." }
 let isNotepadOpen = false;
+let notepadSize = { width: 560, height: 330 };
 let observer = null;
 let showHiddenRoles = false;
 let totalCompaniesCount = null;
@@ -9,11 +10,12 @@ let totalCompaniesCount = null;
 // Load state from Chrome Storage
 const currentUrl = window.location.href.toLowerCase();
 if (currentUrl.includes('ocs') || currentUrl.includes('iith') || currentUrl.includes('localhost') || currentUrl.includes('127.0.0.1') || currentUrl.includes('ocs_debug') || currentUrl.startsWith('file:')) {
-  chrome.storage.local.get(['hiddenRoles', 'roleNotes', 'notepadData', 'isNotepadOpen', 'totalCompaniesCount', 'allRoles'], (result) => {
+  chrome.storage.local.get(['hiddenRoles', 'roleNotes', 'notepadData', 'isNotepadOpen', 'totalCompaniesCount', 'allRoles', 'notepadSize'], (result) => {
     hiddenRoles = result.hiddenRoles || [];
     roleNotes = result.roleNotes || {};
     notepadData = result.notepadData || { top: '', decent: '' };
     isNotepadOpen = result.isNotepadOpen || false;
+    notepadSize = result.notepadSize || { width: 560, height: 330 };
     totalCompaniesCount = result.totalCompaniesCount || (result.allRoles && result.allRoles.length ? result.allRoles.length : null);
     initWhenReady();
   });
@@ -30,6 +32,14 @@ if (currentUrl.includes('ocs') || currentUrl.includes('iith') || currentUrl.incl
       }
       if (changes.isNotepadOpen !== undefined) {
         setNotepadOpenState(!!changes.isNotepadOpen.newValue, false);
+      }
+      if (changes.notepadSize) {
+        notepadSize = changes.notepadSize.newValue || { width: 560, height: 330 };
+        const panel = document.getElementById('ocs-notepad-panel');
+        if (panel) {
+          panel.style.width = `${notepadSize.width}px`;
+          panel.style.height = `${notepadSize.height}px`;
+        }
       }
       if (changes.totalCompaniesCount !== undefined) {
         totalCompaniesCount = changes.totalCompaniesCount.newValue;
@@ -312,9 +322,9 @@ function injectNotepadPanel() {
     position: 'fixed',
     bottom: '78px',
     right: '24px',
-    width: '560px',
+    width: `${notepadSize.width || 560}px`,
     maxWidth: 'calc(100vw - 48px)',
-    height: '330px',
+    height: `${notepadSize.height || 330}px`,
     maxHeight: 'calc(100vh - 120px)',
     minWidth: '380px',
     minHeight: '220px',
@@ -759,7 +769,7 @@ function injectNotepadPanel() {
   });
   footer.innerHTML = `
     <span id="ocs-footer-total" style="color: #e4e4e7; font-weight: 600;">Total: 0 (0 Top + 0 Decent)</span>
-    <span style="font-size: 10px; color: #52525b;">Auto-saved • Drag to move</span>
+    <span style="font-size: 10px; color: #52525b; margin-right: 16px;">Auto-saved • Drag to move / Corner to resize</span>
   `;
 
   panel.appendChild(header);
@@ -769,6 +779,7 @@ function injectNotepadPanel() {
 
   updateNotepadCounts();
   setupNotepadDrag(panel, header);
+  setupNotepadResize(panel);
 }
 
 // Helpers for Notepad
@@ -1077,7 +1088,7 @@ function setupNotepadDrag(panel, header) {
   let panelTop = 0;
 
   header.addEventListener('mousedown', (e) => {
-    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT' || e.target.closest('.ocs-resize-handle')) return;
     isDragging = true;
     startX = e.clientX;
     startY = e.clientY;
@@ -1117,12 +1128,193 @@ function setupNotepadDrag(panel, header) {
   });
 
   header.addEventListener('dblclick', (e) => {
-    if (e.target.tagName === 'BUTTON') return;
+    if (e.target.tagName === 'BUTTON' || e.target.closest('.ocs-resize-handle')) return;
     panel.style.left = 'auto';
     panel.style.top = 'auto';
     panel.style.bottom = '78px';
     panel.style.right = '24px';
   });
+}
+
+function setupNotepadResize(panel) {
+  let isResizing = false;
+  let startX = 0;
+  let startY = 0;
+  let startWidth = 0;
+  let startHeight = 0;
+  let startLeft = 0;
+  let startTop = 0;
+  let activeDir = '';
+
+  const minWidth = 380;
+  const minHeight = 220;
+
+  function onPointerDown(e, dir) {
+    e.stopPropagation();
+    e.preventDefault();
+    isResizing = true;
+    activeDir = dir;
+
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    startX = clientX;
+    startY = clientY;
+
+    const rect = panel.getBoundingClientRect();
+    startWidth = rect.width;
+    startHeight = rect.height;
+    startLeft = rect.left;
+    startTop = rect.top;
+
+    // If resizing from bottom or right while docked to bottom/right:
+    // Convert to top/left anchor so expanding downwards/rightwards doesn't push offscreen
+    if ((dir.includes('s') || dir.includes('e')) && panel.style.bottom !== 'auto') {
+      panel.style.top = `${startTop}px`;
+      panel.style.left = `${startLeft}px`;
+      panel.style.bottom = 'auto';
+      panel.style.right = 'auto';
+    }
+
+    document.body.style.userSelect = 'none';
+  }
+
+  function onPointerMove(e) {
+    if (!isResizing) return;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    const dx = clientX - startX;
+    const dy = clientY - startY;
+
+    const maxWidth = Math.max(minWidth, window.innerWidth - 48);
+    const maxHeight = Math.max(minHeight, window.innerHeight - 100);
+
+    let newWidth = startWidth;
+    let newHeight = startHeight;
+
+    const isAnchoredTopLeft = panel.style.bottom === 'auto' && panel.style.top !== 'auto';
+
+    if (activeDir.includes('w')) {
+      newWidth = Math.max(minWidth, Math.min(maxWidth, startWidth - dx));
+      if (isAnchoredTopLeft) {
+        panel.style.left = `${startLeft - (newWidth - startWidth)}px`;
+      }
+    } else if (activeDir.includes('e')) {
+      newWidth = Math.max(minWidth, Math.min(maxWidth, startWidth + dx));
+    }
+
+    if (activeDir.includes('n')) {
+      newHeight = Math.max(minHeight, Math.min(maxHeight, startHeight - dy));
+      if (isAnchoredTopLeft) {
+        panel.style.top = `${startTop - (newHeight - startHeight)}px`;
+      }
+    } else if (activeDir.includes('s')) {
+      newHeight = Math.max(minHeight, Math.min(maxHeight, startHeight + dy));
+    }
+
+    panel.style.width = `${Math.round(newWidth)}px`;
+    panel.style.height = `${Math.round(newHeight)}px`;
+  }
+
+  function onPointerUp() {
+    if (!isResizing) return;
+    isResizing = false;
+    document.body.style.userSelect = '';
+
+    const rect = panel.getBoundingClientRect();
+    notepadSize = {
+      width: Math.round(rect.width),
+      height: Math.round(rect.height)
+    };
+    chrome.storage.local.set({ notepadSize });
+  }
+
+  window.addEventListener('mousemove', onPointerMove, { passive: true });
+  window.addEventListener('mouseup', onPointerUp);
+  window.addEventListener('touchmove', onPointerMove, { passive: true });
+  window.addEventListener('touchend', onPointerUp);
+
+  function createHandle(dir, cursor, style, content = '') {
+    const handle = document.createElement('div');
+    handle.className = `ocs-resize-handle ocs-resize-${dir}`;
+    handle.title = 'Drag corner or edge to resize • Double-click to reset size';
+    Object.assign(handle.style, {
+      position: 'absolute',
+      zIndex: '1000',
+      cursor: cursor,
+      userSelect: 'none',
+      boxSizing: 'border-box',
+      ...style
+    });
+    if (content) handle.innerHTML = content;
+
+    handle.addEventListener('mousedown', (e) => onPointerDown(e, dir));
+    handle.addEventListener('touchstart', (e) => onPointerDown(e, dir), { passive: false });
+
+    // Double-click resets size to default (560x330)
+    handle.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      notepadSize = { width: 560, height: 330 };
+      panel.style.width = '560px';
+      panel.style.height = '330px';
+      chrome.storage.local.set({ notepadSize });
+      flashNotepadStatus('Size: 560×330 ✓');
+    });
+
+    panel.appendChild(handle);
+    return handle;
+  }
+
+  // 1. Top-Left Corner Handle (with stylish visual grip icon)
+  createHandle('nw', 'nwse-resize', {
+    top: '0',
+    left: '0',
+    width: '24px',
+    height: '24px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: '#71717a',
+    transition: 'color 0.15s'
+  }, '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 9V2H9M2 2L10 10"/></svg>');
+
+  // 2. Bottom-Right Corner Handle (with classic triangle grip indicator)
+  createHandle('se', 'nwse-resize', {
+    bottom: '0',
+    right: '0',
+    width: '20px',
+    height: '20px',
+    display: 'flex',
+    alignItems: 'flex-end',
+    justifyContent: 'flex-end',
+    padding: '4px',
+    color: '#71717a',
+    transition: 'color 0.15s'
+  }, '<svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M9 1L10 1L10 10L1 10L1 9L9 9Z M6 5L7 5L7 10L6 10Z M3 8L4 8L4 10L3 10Z"/></svg>');
+
+  // 3. Top-Right Corner Handle
+  createHandle('ne', 'nesw-resize', {
+    top: '0',
+    right: '0',
+    width: '16px',
+    height: '16px'
+  });
+
+  // 4. Bottom-Left Corner Handle
+  createHandle('sw', 'nesw-resize', {
+    bottom: '0',
+    left: '0',
+    width: '16px',
+    height: '16px'
+  });
+
+  // 5. Four edge strips for seamless borders resizing
+  createHandle('n', 'ns-resize', { top: '0', left: '24px', right: '24px', height: '6px' });
+  createHandle('s', 'ns-resize', { bottom: '0', left: '20px', right: '20px', height: '6px' });
+  createHandle('w', 'ew-resize', { left: '0', top: '24px', bottom: '20px', width: '6px' });
+  createHandle('e', 'ew-resize', { right: '0', top: '24px', bottom: '20px', width: '6px' });
 }
 
 function startObserving(scroller) {
