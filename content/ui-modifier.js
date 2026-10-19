@@ -114,13 +114,23 @@ function injectFloatingActionUI() {
   bar.id = 'ocs-floating-bar';
   Object.assign(bar.style, {
     position: 'fixed',
-    bottom: '24px',
-    right: '24px',
+    bottom: '20px',
+    left: '50%',
+    transform: 'translateX(-50%)',
     display: 'flex',
     alignItems: 'center',
-    gap: '12px',
+    gap: '10px',
+    padding: '6px 10px',
+    backgroundColor: 'rgba(20, 20, 24, 0.88)',
+    backdropFilter: 'blur(16px)',
+    WebkitBackdropFilter: 'blur(16px)',
+    border: '1px solid rgba(255, 255, 255, 0.12)',
+    borderRadius: '40px',
+    boxShadow: '0 16px 36px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05)',
     zIndex: '99999',
-    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    maxWidth: 'calc(100vw - 32px)',
+    boxSizing: 'border-box'
   });
 
   // 1. Floating Total Companies Count Icon/Badge
@@ -132,24 +142,31 @@ function injectFloatingActionUI() {
     ? `Total Companies on Portal: ${totalCompaniesCount} (Click to scroll to table)` 
     : 'Detecting total companies from table...';
   Object.assign(totalCountBtn.style, {
-    padding: '12px 20px',
-    backgroundColor: '#111',
+    padding: '9px 18px',
+    backgroundColor: '#18181b',
     color: '#fff',
-    border: '1px solid #333',
-    borderRadius: '30px',
-    boxShadow: '0 8px 16px rgba(0,0,0,0.3)',
+    border: '1px solid #33333d',
+    borderRadius: '24px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
     cursor: 'pointer',
     fontWeight: 'bold',
     fontFamily: 'inherit',
-    fontSize: '14px',
-    transition: 'all 0.25s ease',
+    fontSize: '13.5px',
+    transition: 'all 0.2s ease',
     display: 'flex',
     alignItems: 'center',
-    gap: '6px'
+    gap: '6px',
+    whiteSpace: 'nowrap'
   });
 
-  totalCountBtn.addEventListener('mouseenter', () => totalCountBtn.style.transform = 'scale(1.05)');
-  totalCountBtn.addEventListener('mouseleave', () => totalCountBtn.style.transform = 'scale(1)');
+  totalCountBtn.addEventListener('mouseenter', () => {
+    totalCountBtn.style.transform = 'translateY(-2px)';
+    totalCountBtn.style.borderColor = '#4f4f5a';
+  });
+  totalCountBtn.addEventListener('mouseleave', () => {
+    totalCountBtn.style.transform = 'translateY(0)';
+    totalCountBtn.style.borderColor = '#33333d';
+  });
   totalCountBtn.addEventListener('click', () => {
     updatePortalTotalCount();
     const target = document.querySelector('.MuiTablePagination-displayedRows') || 
@@ -165,24 +182,31 @@ function injectFloatingActionUI() {
   notepadBtn.id = 'ocs-notepad-btn';
   notepadBtn.innerHTML = '📝 Notepad';
   Object.assign(notepadBtn.style, {
-    padding: '12px 20px',
-    backgroundColor: isNotepadOpen ? '#2563eb' : '#111',
+    padding: '9px 18px',
+    backgroundColor: isNotepadOpen ? '#2563eb' : '#18181b',
     color: '#fff',
-    border: isNotepadOpen ? '1px solid #3b82f6' : '1px solid #333',
-    borderRadius: '30px',
-    boxShadow: '0 8px 16px rgba(0,0,0,0.3)',
+    border: isNotepadOpen ? '1px solid #3b82f6' : '1px solid #33333d',
+    borderRadius: '24px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
     cursor: 'pointer',
     fontWeight: 'bold',
     fontFamily: 'inherit',
-    fontSize: '14px',
-    transition: 'all 0.25s ease',
+    fontSize: '13.5px',
+    transition: 'all 0.2s ease',
     display: 'flex',
     alignItems: 'center',
-    gap: '6px'
+    gap: '6px',
+    whiteSpace: 'nowrap'
   });
 
-  notepadBtn.addEventListener('mouseenter', () => notepadBtn.style.transform = 'scale(1.05)');
-  notepadBtn.addEventListener('mouseleave', () => notepadBtn.style.transform = 'scale(1)');
+  notepadBtn.addEventListener('mouseenter', () => {
+    notepadBtn.style.transform = 'translateY(-2px)';
+    if (!isNotepadOpen) notepadBtn.style.borderColor = '#4f4f5a';
+  });
+  notepadBtn.addEventListener('mouseleave', () => {
+    notepadBtn.style.transform = 'translateY(0)';
+    if (!isNotepadOpen) notepadBtn.style.borderColor = '#33333d';
+  });
   notepadBtn.addEventListener('click', () => {
     setNotepadOpenState(!isNotepadOpen, true);
   });
@@ -192,26 +216,37 @@ function injectFloatingActionUI() {
   toggleBtn.id = 'ocs-toggle-hidden-btn';
   toggleBtn.innerHTML = showHiddenRoles ? '🙈 Hide Hidden' : '👁️ Show Hidden';
   Object.assign(toggleBtn.style, {
-    padding: '12px 20px',
-    backgroundColor: showHiddenRoles ? '#28a745' : '#111',
+    padding: '9px 18px',
+    backgroundColor: showHiddenRoles ? '#28a745' : '#18181b',
     color: '#fff',
-    border: '1px solid #333',
-    borderRadius: '30px',
-    boxShadow: '0 8px 16px rgba(0,0,0,0.3)',
+    border: showHiddenRoles ? '1px solid #34d399' : '1px solid #33333d',
+    borderRadius: '24px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
     cursor: 'pointer',
     fontWeight: 'bold',
     fontFamily: 'inherit',
-    fontSize: '14px',
-    transition: 'all 0.25s ease'
+    fontSize: '13.5px',
+    transition: 'all 0.2s ease',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    whiteSpace: 'nowrap'
   });
 
-  toggleBtn.addEventListener('mouseenter', () => toggleBtn.style.transform = 'scale(1.05)');
-  toggleBtn.addEventListener('mouseleave', () => toggleBtn.style.transform = 'scale(1)');
+  toggleBtn.addEventListener('mouseenter', () => {
+    toggleBtn.style.transform = 'translateY(-2px)';
+    if (!showHiddenRoles) toggleBtn.style.borderColor = '#4f4f5a';
+  });
+  toggleBtn.addEventListener('mouseleave', () => {
+    toggleBtn.style.transform = 'translateY(0)';
+    if (!showHiddenRoles) toggleBtn.style.borderColor = '#33333d';
+  });
 
   toggleBtn.addEventListener('click', () => {
     showHiddenRoles = !showHiddenRoles;
     toggleBtn.innerHTML = showHiddenRoles ? '🙈 Hide Hidden' : '👁️ Show Hidden';
-    toggleBtn.style.backgroundColor = showHiddenRoles ? '#28a745' : '#111';
+    toggleBtn.style.backgroundColor = showHiddenRoles ? '#28a745' : '#18181b';
+    toggleBtn.style.borderColor = showHiddenRoles ? '#34d399' : '#33333d';
     document.querySelectorAll('.MuiDataGrid-row, [role="row"]').forEach(processRow);
   });
 
@@ -1069,8 +1104,8 @@ function setNotepadOpenState(isOpen, saveState = true) {
     panel.style.display = isNotepadOpen ? 'flex' : 'none';
   }
   if (notepadBtn) {
-    notepadBtn.style.backgroundColor = isNotepadOpen ? '#2563eb' : '#111';
-    notepadBtn.style.borderColor = isNotepadOpen ? '#3b82f6' : '#333';
+    notepadBtn.style.backgroundColor = isNotepadOpen ? '#2563eb' : '#18181b';
+    notepadBtn.style.borderColor = isNotepadOpen ? '#3b82f6' : '#33333d';
   }
 
   updateNotepadCounts();
