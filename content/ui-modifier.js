@@ -502,6 +502,8 @@ function injectNotepadPanel() {
     colHeader.appendChild(colTitle);
     colHeader.appendChild(headerRight);
 
+    const undoManager = new NotepadUndoManager(notepadData[storageKey] || '');
+
     const textarea = document.createElement('textarea');
     textarea.id = textId;
     textarea.placeholder = placeholderText;
@@ -534,7 +536,9 @@ function injectNotepadPanel() {
       // Clean up empty bullets when leaving the textarea
       const cleaned = formatNotepadText(textarea.value, { keepEmptyBullets: false });
       if (cleaned !== textarea.value) {
+        undoManager.record(textarea.value, textarea.selectionStart, true);
         textarea.value = cleaned;
+        undoManager.record(textarea.value, textarea.selectionStart, true);
       }
       updateNotepadCounts();
       triggerNotepadSave();
@@ -542,6 +546,38 @@ function injectNotepadPanel() {
 
     textarea.addEventListener('keydown', (e) => {
       if (e.isComposing) return;
+
+      const isMod = e.metaKey || e.ctrlKey;
+
+      // Undo (Cmd+Z or Ctrl+Z)
+      if (isMod && !e.altKey && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+        e.preventDefault();
+        const prevState = undoManager.undo(textarea.value, textarea.selectionStart);
+        if (prevState) {
+          undoManager.isApplying = true;
+          textarea.value = prevState.value;
+          textarea.setSelectionRange(prevState.cursor, prevState.cursor);
+          undoManager.isApplying = false;
+          updateNotepadCounts();
+          triggerNotepadSave();
+        }
+        return;
+      }
+
+      // Redo (Cmd+Shift+Z, Ctrl+Shift+Z, or Ctrl+Y)
+      if (isMod && !e.altKey && (((e.key === 'z' || e.key === 'Z') && e.shiftKey) || e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault();
+        const nextState = undoManager.redo();
+        if (nextState) {
+          undoManager.isApplying = true;
+          textarea.value = nextState.value;
+          textarea.setSelectionRange(nextState.cursor, nextState.cursor);
+          undoManager.isApplying = false;
+          updateNotepadCounts();
+          triggerNotepadSave();
+        }
+        return;
+      }
 
       const val = textarea.value;
       const cursor = textarea.selectionStart;
@@ -556,6 +592,7 @@ function injectNotepadPanel() {
         // Case A: If current line is an empty bullet (e.g. "2. " or "2.")
         if (/^\s*\d+[\.\)]\s*$/.test(curLine)) {
           e.preventDefault();
+          undoManager.record(val, cursor, true);
           allLines[lineIndex] = '';
           textarea.value = formatNotepadText(allLines.join('\n'));
           let newPos = 0;
@@ -563,6 +600,7 @@ function injectNotepadPanel() {
             newPos += allLines[i].length + 1;
           }
           textarea.setSelectionRange(newPos, newPos);
+          undoManager.record(textarea.value, newPos, true);
           updateNotepadCounts();
           triggerNotepadSave();
           return;
@@ -572,6 +610,7 @@ function injectNotepadPanel() {
         const isHeader = curLine.trim().startsWith('#') || /^\s*\d+[\.\)]\s*#/.test(curLine);
         if (!isHeader && curLine.trim().length > 0) {
           e.preventDefault();
+          undoManager.record(val, cursor, true);
           // Count companies up to this line
           let countUpToNow = 0;
           for (let i = 0; i <= lineIndex; i++) {
@@ -588,6 +627,7 @@ function injectNotepadPanel() {
           textarea.value = updatedVal;
           const newPos = cursor + bulletToInsert.length;
           textarea.setSelectionRange(newPos, newPos);
+          undoManager.record(textarea.value, newPos, true);
           updateNotepadCounts();
           triggerNotepadSave();
           return;
@@ -604,6 +644,7 @@ function injectNotepadPanel() {
 
           if (/^\s*\d+[\.\)]\s*$/.test(curLine)) {
             e.preventDefault();
+            undoManager.record(val, cursor, true);
             allLines[lineIndex] = '';
             textarea.value = formatNotepadText(allLines.join('\n'));
             let newPos = 0;
@@ -611,6 +652,7 @@ function injectNotepadPanel() {
               newPos += allLines[i].length + 1;
             }
             textarea.setSelectionRange(newPos, newPos);
+            undoManager.record(textarea.value, newPos, true);
             updateNotepadCounts();
             triggerNotepadSave();
             return;
@@ -628,6 +670,7 @@ function injectNotepadPanel() {
 
           if (/^\s*\d+[\.\)]\s*$/.test(curLine)) {
             e.preventDefault();
+            undoManager.record(val, cursor, true);
             allLines[lineIndex] = '# ';
             textarea.value = formatNotepadText(allLines.join('\n'));
             let newPos = 0;
@@ -636,6 +679,7 @@ function injectNotepadPanel() {
             }
             newPos += 2; // after "# "
             textarea.setSelectionRange(newPos, newPos);
+            undoManager.record(textarea.value, newPos, true);
             updateNotepadCounts();
             triggerNotepadSave();
             return;
@@ -645,11 +689,13 @@ function injectNotepadPanel() {
     });
 
     textarea.addEventListener('input', () => {
-      applyAutoNumbering(textarea);
+      undoManager.record(textarea.value, textarea.selectionStart);
+      applyAutoNumbering(textarea, undoManager);
     });
 
     textarea.addEventListener('paste', () => {
-      setTimeout(() => applyAutoNumbering(textarea), 0);
+      undoManager.record(textarea.value, textarea.selectionStart, true);
+      setTimeout(() => applyAutoNumbering(textarea, undoManager), 0);
     });
 
     col.appendChild(colHeader);
@@ -721,8 +767,54 @@ function injectNotepadPanel() {
 let notepadSaveTimer = null;
 let notepadStatusTimer = null;
 
+// Undo & Redo History Manager for Notepad Textareas
+class NotepadUndoManager {
+  constructor(initialVal = '') {
+    this.undoStack = [{ value: initialVal, cursor: initialVal.length }];
+    this.redoStack = [];
+    this.lastPushTime = 0;
+    this.isApplying = false;
+  }
+
+  record(val, cursor, force = false) {
+    if (this.isApplying) return;
+    const current = this.undoStack[this.undoStack.length - 1];
+    if (current && current.value === val) {
+      current.cursor = cursor;
+      return;
+    }
+    const now = Date.now();
+    // Group rapid continuous typing within 500ms
+    if (!force && current && (now - this.lastPushTime < 500)) {
+      current.value = val;
+      current.cursor = cursor;
+      this.lastPushTime = now;
+      return;
+    }
+    this.undoStack.push({ value: val, cursor });
+    if (this.undoStack.length > 150) this.undoStack.shift();
+    this.redoStack = [];
+    this.lastPushTime = now;
+  }
+
+  undo(currentVal, currentCursor) {
+    if (this.undoStack.length <= 1) return null;
+    const current = this.undoStack.pop();
+    this.redoStack.push({ value: currentVal, cursor: currentCursor });
+    return this.undoStack[this.undoStack.length - 1];
+  }
+
+  redo() {
+    if (this.redoStack.length === 0) return null;
+    const next = this.redoStack.pop();
+    this.undoStack.push(next);
+    return next;
+  }
+}
+
 // Format notepad lines with 1-based sequential numbering.
 // Lines starting with # are comments/headers and are never counted or numbered.
+// CRITICAL: Whitespace and intra-line spaces are strictly preserved.
 function formatNotepadText(text, options = { keepEmptyBullets: true }) {
   if (typeof text !== 'string') return '';
   const lines = text.split('\n');
@@ -733,9 +825,9 @@ function formatNotepadText(text, options = { keepEmptyBullets: true }) {
     const rawLine = lines[i];
     const trimmed = rawLine.trim();
 
-    // 1. Empty or whitespace-only line
+    // 1. Empty or whitespace-only line: preserve whitespace as is
     if (!trimmed) {
-      newLines.push('');
+      newLines.push(rawLine);
       continue;
     }
 
@@ -758,14 +850,23 @@ function formatNotepadText(text, options = { keepEmptyBullets: true }) {
       continue;
     }
 
-    // 4. Company line: strip existing number prefix if any
-    const companyName = trimmed.replace(/^\d+[\.\)]\s*/, '').trim();
-    if (companyName.length > 0) {
-      newLines.push(`${companyIndex}. ${companyName}`);
+    // 4. Line already has a number prefix: e.g. "1. Google" or "1. Tower "
+    const numMatch = rawLine.match(/^(\s*)(\d+)[\.\)]\s*(.*)$/);
+    if (numMatch) {
+      const num = parseInt(numMatch[2], 10);
+      const rest = numMatch[3]; // Keep exact rest, DO NOT trim to preserve spaces!
+      if (num === companyIndex) {
+        newLines.push(rawLine); // Already correct index, keep exact raw line
+      } else {
+        newLines.push(`${companyIndex}. ${rest}`);
+      }
       companyIndex++;
-    } else {
-      newLines.push('');
+      continue;
     }
+
+    // 5. Line has content but NO number prefix at all (e.g. user typed "Google" or pasted)
+    newLines.push(`${companyIndex}. ${rawLine.trimStart()}`);
+    companyIndex++;
   }
 
   return newLines.join('\n');
@@ -782,8 +883,8 @@ function getCompanyCount(text) {
   }).length;
 }
 
-// Apply auto-numbering to a textarea while accurately preserving cursor position
-function applyAutoNumbering(textarea, options = {}) {
+// Apply auto-numbering to a textarea while accurately preserving cursor position and undo history
+function applyAutoNumbering(textarea, undoManager, options = {}) {
   if (!textarea) return;
 
   const originalValue = textarea.value;
@@ -811,10 +912,15 @@ function applyAutoNumbering(textarea, options = {}) {
     keepEmptyBullets: options.keepEmptyBullets !== false
   });
 
-  // If nothing changed, do not touch textarea.value (preserves native undo stack)
+  // If nothing changed, do not touch textarea.value (preserves native spaces & undo stack)
   if (formattedValue === originalValue) {
     updateNotepadCounts();
     return;
+  }
+
+  // Record state prior to programmatic change
+  if (undoManager) {
+    undoManager.record(originalValue, cursorStart, true);
   }
 
   // 3. Update textarea.value
@@ -844,6 +950,10 @@ function applyAutoNumbering(textarea, options = {}) {
   newCursorPos += newCol;
 
   textarea.setSelectionRange(newCursorPos, newCursorPos);
+
+  if (undoManager) {
+    undoManager.record(formattedValue, newCursorPos, true);
+  }
 
   // Update counts and trigger debounce save
   updateNotepadCounts();
