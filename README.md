@@ -64,10 +64,14 @@ A dedicated, dual-column priority notepad docked right inside the portal:
 ---
 
 ### 7. 🔍 Scraper, New Role Detection & Notifications
+- **Direct 1-Click Scan from Bottom Dock**: Hit `⚡ Scan Roles` right in the centered macOS dock without having to open the popup.
+- **Live Progress Feedback**: Button updates in real-time (`🔄 Filters...`, `🔄 page 1...`, `🔄 Comparing...`) as virtual scroller pages are read.
+- **Instant Result & Save**:
+  - **No New Roles**: Flashes `✓ Up to date` in soft emerald green.
+  - **New Roles Found**: Turns into a glowing `🎉 X New! (Save DB)` pill button. Click once to update your local database snapshot.
 - **Automated VirtualScroller Scraper**: Transparently iterates through all pages and virtual DOM rows in the MUI DataGrid.
 - **Smart Comparison Engine**: Normalizes role titles and company names to compare current portal listings with your saved database.
 - **Desktop Notifications**: Triggers native Chrome alerts displaying newly added company names, job profiles, and CTC packages.
-- **One-Click Database Save**: Updates your local database snapshot with a single click.
 
 ---
 

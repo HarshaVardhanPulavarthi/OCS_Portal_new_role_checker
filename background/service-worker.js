@@ -2,69 +2,88 @@ import { findNewRoles } from '../utils/comparison.js';
 
 // Keep the latest scan in memory to make saving instantaneous
 let lastScannedRoles = null;
+let currentScanTabId = null;
+
+function notifyAll(msg) {
+  chrome.runtime.sendMessage(msg).catch(() => {});
+  if (currentScanTabId) {
+    chrome.tabs.sendMessage(currentScanTabId, msg).catch(() => {});
+  }
+}
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === 'START_SCAN') {
-    startScan();
+    const senderTabId = sender?.tab?.id;
+    startScan(senderTabId);
     sendResponse({ status: 'started' });
   } else if (message.action === 'UPDATE_DATABASE') {
     (async () => {
       try {
-        chrome.runtime.sendMessage({ type: 'SAVE_PROGRESS', text: 'Starting save process...' });
+        notifyAll({ type: 'SAVE_PROGRESS', text: 'Starting save process...' });
         await updateDatabase();
-        chrome.runtime.sendMessage({ type: 'SAVE_PROGRESS', text: 'Save complete!' });
+        notifyAll({ type: 'SAVE_PROGRESS', text: 'Save complete!' });
+        notifyAll({ type: 'DATABASE_UPDATED' });
         sendResponse({ status: 'updated' });
       } catch (err) {
-        chrome.runtime.sendMessage({ type: 'SAVE_PROGRESS', text: 'Save failed!' });
+        notifyAll({ type: 'SAVE_PROGRESS', text: 'Save failed!' });
         sendResponse({ status: 'error', error: err.message || String(err) });
       }
     })();
     return true;
+  } else if (message.type === 'PROGRESS_UPDATE') {
+    // If progress update was sent from content script scraper, also forward to target tab
+    if (currentScanTabId) {
+      chrome.tabs.sendMessage(currentScanTabId, message).catch(() => {});
+    }
   }
   return true;
 });
 
 async function updateDatabase() {
   if (lastScannedRoles) {
-    chrome.runtime.sendMessage({ type: 'SAVE_PROGRESS', text: 'Saving from memory...' });
+    notifyAll({ type: 'SAVE_PROGRESS', text: 'Saving from memory...' });
     await chrome.storage.local.set({ 
       allRoles: lastScannedRoles,
       lastChecked: Date.now()
     });
     // Clear memory
     lastScannedRoles = null;
-    chrome.runtime.sendMessage({ type: 'SAVE_PROGRESS', text: 'Memory save successful.' });
+    notifyAll({ type: 'SAVE_PROGRESS', text: 'Memory save successful.' });
   } else {
     // Fallback if service worker restarted (rare during normal flow)
-    chrome.runtime.sendMessage({ type: 'SAVE_PROGRESS', text: 'Memory empty, reading pendingRoles...' });
+    notifyAll({ type: 'SAVE_PROGRESS', text: 'Memory empty, reading pendingRoles...' });
     const result = await chrome.storage.local.get(['pendingRoles']);
     if (result.pendingRoles) {
-      chrome.runtime.sendMessage({ type: 'SAVE_PROGRESS', text: 'Found pendingRoles, saving to allRoles...' });
+      notifyAll({ type: 'SAVE_PROGRESS', text: 'Found pendingRoles, saving to allRoles...' });
       await chrome.storage.local.set({ 
         allRoles: result.pendingRoles,
         lastChecked: Date.now()
       });
       await chrome.storage.local.remove('pendingRoles');
-      chrome.runtime.sendMessage({ type: 'SAVE_PROGRESS', text: 'Fallback save successful.' });
+      notifyAll({ type: 'SAVE_PROGRESS', text: 'Fallback save successful.' });
     } else {
-      chrome.runtime.sendMessage({ type: 'SAVE_PROGRESS', text: 'No pending roles found to save.' });
+      notifyAll({ type: 'SAVE_PROGRESS', text: 'No pending roles found to save.' });
     }
   }
 }
 
-async function startScan() {
+async function startScan(senderTabId) {
   try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tabs || tabs.length === 0) {
-      throw new Error("No active tab found.");
-    }
-    
-    const tabUrl = tabs[0].url ? tabs[0].url.toLowerCase() : '';
-    if (!tabUrl.includes('ocs') || !tabUrl.includes('iith')) {
-      throw new Error("This extension only works on the OCS IITH portal.");
-    }
+    let tabId = senderTabId;
+    if (!tabId) {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tabs || tabs.length === 0) {
+        throw new Error("No active tab found.");
+      }
+      
+      const tabUrl = tabs[0].url ? tabs[0].url.toLowerCase() : '';
+      if (!tabUrl.includes('ocs') || !tabUrl.includes('iith')) {
+        throw new Error("This extension only works on the OCS IITH portal.");
+      }
 
-    const tabId = tabs[0].id;
+      tabId = tabs[0].id;
+    }
+    currentScanTabId = tabId;
 
     // Inject the scraper script
     await chrome.scripting.executeScript({
@@ -72,8 +91,8 @@ async function startScan() {
       files: ['content/ocs-scraper.js']
     });
 
-    // Notify popup that we're detecting OCS
-    chrome.runtime.sendMessage({ type: 'PROGRESS_UPDATE', text: 'Detecting OCS table...' });
+    // Notify that we're detecting OCS
+    notifyAll({ type: 'PROGRESS_UPDATE', text: 'Detecting OCS table...' });
 
     // Send message to the content script to start scraping
     const response = await chrome.tabs.sendMessage(tabId, { action: 'RUN_SCRAPER' });
@@ -82,7 +101,7 @@ async function startScan() {
       const currentRoles = response.data;
       
       // Notify phase 2: comparison
-      chrome.runtime.sendMessage({ type: 'PROGRESS_UPDATE', text: 'Comparing with previous roles...' });
+      notifyAll({ type: 'PROGRESS_UPDATE', text: 'Comparing with previous roles...' });
       
       // Fetch historic roles from local storage
       const storageResult = await chrome.storage.local.get(['allRoles']);
@@ -93,7 +112,7 @@ async function startScan() {
 
       // Since roles only get added, the current scrape is the new complete database.
       lastScannedRoles = currentRoles; // store in memory for instant save
-      chrome.runtime.sendMessage({ type: 'PROGRESS_UPDATE', text: 'Waiting for database update...' });
+      notifyAll({ type: 'PROGRESS_UPDATE', text: 'Waiting for database update...' });
       
       // Also store in pendingRoles as a fallback in case service worker sleeps
       await chrome.storage.local.set({ pendingRoles: currentRoles });
@@ -126,8 +145,8 @@ async function startScan() {
         });
       }
 
-      // Notify popup we are done
-      chrome.runtime.sendMessage({ 
+      // Notify popup and tab we are done
+      notifyAll({ 
         type: 'SCAN_COMPLETE', 
         data: {
           totalFound: currentRoles.length,
@@ -142,6 +161,6 @@ async function startScan() {
 
   } catch (error) {
     console.error("Scan error:", error);
-    chrome.runtime.sendMessage({ type: 'SCAN_ERROR', error: error.message || String(error) });
+    notifyAll({ type: 'SCAN_ERROR', error: error.message || String(error) });
   }
 }

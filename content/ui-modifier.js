@@ -6,6 +6,119 @@ let notepadSize = { width: 560, height: 330 };
 let observer = null;
 let showHiddenRoles = false;
 let totalCompaniesCount = null;
+let isScanning = false;
+let scanState = 'IDLE'; // 'IDLE' | 'SCANNING' | 'NEEDS_SAVE' | 'SAVING' | 'SAVED' | 'UP_TO_DATE' | 'ERROR'
+let scanRevertTimer = null;
+let lastScanNewCount = 0;
+
+function ensureGlobalStyles() {
+  if (document.getElementById('ocs-ui-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'ocs-ui-styles';
+  style.textContent = `
+    @keyframes ocs-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .ocs-spinning {
+      display: inline-block;
+      animation: ocs-spin 1s linear infinite;
+    }
+  `;
+  (document.head || document.documentElement).appendChild(style);
+}
+
+function renderScanButtonState(btn) {
+  if (!btn) btn = document.getElementById('ocs-scan-btn');
+  if (!btn) return;
+
+  if (isScanning || scanState === 'SCANNING') {
+    btn.innerHTML = `<span class="ocs-spinning">🔄</span> <span id="ocs-scan-btn-label">Scanning...</span>`;
+    btn.style.backgroundColor = '#18181b';
+    btn.style.borderColor = '#3b82f6';
+    btn.style.color = '#93c5fd';
+    btn.style.boxShadow = '0 0 12px rgba(59, 130, 246, 0.35)';
+    btn.style.cursor = 'wait';
+    btn.title = 'Scraping and checking OCS portal for new roles...';
+  } else if (scanState === 'NEEDS_SAVE') {
+    const count = btn.dataset.newCount || (lastScanNewCount ? `${lastScanNewCount}` : '');
+    btn.innerHTML = `🎉 ${count ? count + ' ' : ''}New! (Save DB)`;
+    btn.style.backgroundColor = '#14532d';
+    btn.style.borderColor = '#22c55e';
+    btn.style.color = '#ffffff';
+    btn.style.boxShadow = '0 0 16px rgba(34, 197, 94, 0.4)';
+    btn.style.cursor = 'pointer';
+    btn.title = 'New roles detected! Click here to save them to your database.';
+  } else if (scanState === 'SAVING') {
+    btn.innerHTML = `<span class="ocs-spinning">🔄</span> Saving DB...`;
+    btn.style.backgroundColor = '#14532d';
+    btn.style.borderColor = '#22c55e';
+    btn.style.color = '#ffffff';
+    btn.style.boxShadow = '0 0 12px rgba(34, 197, 94, 0.35)';
+    btn.style.cursor = 'wait';
+    btn.title = 'Saving new roles to local database...';
+  } else if (scanState === 'SAVED') {
+    btn.innerHTML = `✅ Saved ✓`;
+    btn.style.backgroundColor = '#14532d';
+    btn.style.borderColor = '#22c55e';
+    btn.style.color = '#86efac';
+    btn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)';
+    btn.style.cursor = 'default';
+    btn.title = 'Database successfully updated!';
+  } else if (scanState === 'UP_TO_DATE') {
+    btn.innerHTML = `✓ Up to date`;
+    btn.style.backgroundColor = '#18181b';
+    btn.style.borderColor = '#22c55e';
+    btn.style.color = '#4ade80';
+    btn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)';
+    btn.style.cursor = 'default';
+    btn.title = 'OCS scan complete: No new roles found.';
+  } else if (scanState === 'ERROR') {
+    btn.innerHTML = `⚠️ Scan Failed`;
+    btn.style.backgroundColor = '#18181b';
+    btn.style.borderColor = '#ef4444';
+    btn.style.color = '#f87171';
+    btn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)';
+    btn.style.cursor = 'pointer';
+  } else {
+    // Default IDLE state
+    btn.innerHTML = `⚡ Scan Roles`;
+    btn.style.backgroundColor = '#18181b';
+    btn.style.borderColor = '#33333d';
+    btn.style.color = '#fff';
+    btn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)';
+    btn.style.cursor = 'pointer';
+    btn.title = 'Scan OCS portal for new job postings and roles';
+  }
+}
+
+function handleScanProgressText(text) {
+  if (!text) return;
+  isScanning = true;
+  scanState = 'SCANNING';
+  const scanBtn = document.getElementById('ocs-scan-btn');
+  if (!scanBtn) return;
+
+  renderScanButtonState(scanBtn);
+
+  const label = scanBtn.querySelector('#ocs-scan-btn-label');
+  if (label) {
+    let shortText = text;
+    if (text.toLowerCase().includes('reading page')) {
+      shortText = text.replace('Reading ', ''); // e.g. "page 2..."
+    } else if (text.toLowerCase().includes('filters')) {
+      shortText = 'Filters...';
+    } else if (text.toLowerCase().includes('comparing')) {
+      shortText = 'Comparing...';
+    } else if (text.toLowerCase().includes('detecting')) {
+      shortText = 'Detecting...';
+    } else if (text.toLowerCase().includes('setting up')) {
+      shortText = 'Setting up...';
+    }
+    label.textContent = shortText;
+  }
+  scanBtn.title = `Scan in progress: ${text}`;
+}
 
 // Load state from Chrome Storage
 const currentUrl = window.location.href.toLowerCase();
@@ -51,12 +164,70 @@ if (currentUrl.includes('ocs') || currentUrl.includes('iith') || currentUrl.incl
     }
   });
 
-  // Listen for messages from popup
+  // Listen for scan progress events dispatched from the content scraper
+  window.addEventListener('ocs-scan-progress', (e) => {
+    const text = e.detail?.text;
+    if (text) handleScanProgressText(text);
+  });
+
+  // Listen for messages from popup or background service worker
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'TOGGLE_NOTEPAD') {
       const forceOpen = message.forceOpen !== undefined ? message.forceOpen : !isNotepadOpen;
       setNotepadOpenState(forceOpen, true);
       sendResponse({ status: 'ok', isOpen: isNotepadOpen });
+    } else if (message.type === 'PROGRESS_UPDATE') {
+      handleScanProgressText(message.text);
+    } else if (message.type === 'SCAN_COMPLETE') {
+      isScanning = false;
+      const { totalFound, newRoles, isFirstRun } = message.data || {};
+      const scanBtn = document.getElementById('ocs-scan-btn');
+      
+      if (newRoles > 0 || isFirstRun) {
+        scanState = 'NEEDS_SAVE';
+        lastScanNewCount = isFirstRun ? totalFound : newRoles;
+        if (scanBtn) {
+          scanBtn.dataset.newCount = isFirstRun ? `${totalFound} Total` : `${newRoles}`;
+        }
+        renderScanButtonState(scanBtn);
+      } else {
+        scanState = 'UP_TO_DATE';
+        renderScanButtonState(scanBtn);
+        clearTimeout(scanRevertTimer);
+        scanRevertTimer = setTimeout(() => {
+          if (scanState === 'UP_TO_DATE') {
+            scanState = 'IDLE';
+            renderScanButtonState();
+          }
+        }, 3500);
+      }
+      updatePortalTotalCount();
+    } else if (message.type === 'SCAN_ERROR') {
+      isScanning = false;
+      scanState = 'ERROR';
+      const scanBtn = document.getElementById('ocs-scan-btn');
+      if (scanBtn && message.error) {
+        scanBtn.title = `Error: ${message.error}`;
+      }
+      renderScanButtonState(scanBtn);
+      clearTimeout(scanRevertTimer);
+      scanRevertTimer = setTimeout(() => {
+        if (scanState === 'ERROR') {
+          scanState = 'IDLE';
+          renderScanButtonState();
+        }
+      }, 3500);
+    } else if (message.type === 'DATABASE_UPDATED') {
+      scanState = 'SAVED';
+      renderScanButtonState();
+      clearTimeout(scanRevertTimer);
+      scanRevertTimer = setTimeout(() => {
+        if (scanState === 'SAVED') {
+          scanState = 'IDLE';
+          renderScanButtonState();
+        }
+      }, 2500);
+      updatePortalTotalCount();
     }
   });
 }
@@ -64,6 +235,7 @@ if (currentUrl.includes('ocs') || currentUrl.includes('iith') || currentUrl.incl
 let hasRemovedFilters = false;
 
 function initWhenReady() {
+  ensureGlobalStyles();
   injectFloatingActionUI();
   injectNotepadPanel();
   updatePortalTotalCount();
@@ -177,7 +349,82 @@ function injectFloatingActionUI() {
     }
   });
 
-  // 2. Floating Notepad Button
+  // 2. Floating Scan for New Roles Button
+  const scanBtn = document.createElement('button');
+  scanBtn.id = 'ocs-scan-btn';
+  Object.assign(scanBtn.style, {
+    padding: '9px 18px',
+    borderRadius: '24px',
+    fontWeight: 'bold',
+    fontFamily: 'inherit',
+    fontSize: '13.5px',
+    transition: 'all 0.2s ease',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    whiteSpace: 'nowrap'
+  });
+  renderScanButtonState(scanBtn);
+
+  scanBtn.addEventListener('mouseenter', () => {
+    scanBtn.style.transform = 'translateY(-2px)';
+    if (scanState === 'IDLE') scanBtn.style.borderColor = '#4f4f5a';
+  });
+  scanBtn.addEventListener('mouseleave', () => {
+    scanBtn.style.transform = 'translateY(0)';
+    if (scanState === 'IDLE') scanBtn.style.borderColor = '#33333d';
+  });
+
+  scanBtn.addEventListener('click', () => {
+    if (scanState === 'NEEDS_SAVE') {
+      scanState = 'SAVING';
+      renderScanButtonState(scanBtn);
+      chrome.runtime.sendMessage({ action: 'UPDATE_DATABASE' }, (response) => {
+        if (chrome.runtime.lastError || (response && response.status === 'error')) {
+          scanState = 'ERROR';
+          scanBtn.title = 'Error saving database: ' + (chrome.runtime.lastError ? chrome.runtime.lastError.message : response?.error);
+          renderScanButtonState(scanBtn);
+          clearTimeout(scanRevertTimer);
+          scanRevertTimer = setTimeout(() => {
+            scanState = 'IDLE';
+            renderScanButtonState();
+          }, 3500);
+        } else {
+          scanState = 'SAVED';
+          renderScanButtonState(scanBtn);
+          updatePortalTotalCount();
+          clearTimeout(scanRevertTimer);
+          scanRevertTimer = setTimeout(() => {
+            scanState = 'IDLE';
+            renderScanButtonState();
+          }, 2500);
+        }
+      });
+      return;
+    }
+
+    if (isScanning || scanState === 'SAVING') return;
+
+    isScanning = true;
+    scanState = 'SCANNING';
+    renderScanButtonState(scanBtn);
+
+    chrome.runtime.sendMessage({ action: 'START_SCAN' }, (response) => {
+      if (chrome.runtime.lastError) {
+        isScanning = false;
+        scanState = 'ERROR';
+        scanBtn.title = 'Error starting scan: ' + chrome.runtime.lastError.message;
+        renderScanButtonState(scanBtn);
+        clearTimeout(scanRevertTimer);
+        scanRevertTimer = setTimeout(() => {
+          scanState = 'IDLE';
+          renderScanButtonState();
+        }, 3500);
+      }
+    });
+  });
+
+  // 3. Floating Notepad Button
   const notepadBtn = document.createElement('button');
   notepadBtn.id = 'ocs-notepad-btn';
   notepadBtn.innerHTML = '📝 Notepad';
@@ -211,7 +458,7 @@ function injectFloatingActionUI() {
     setNotepadOpenState(!isNotepadOpen, true);
   });
 
-  // 3. Floating Toggle Button to Show/Hide Hidden Roles
+  // 4. Floating Toggle Button to Show/Hide Hidden Roles
   const toggleBtn = document.createElement('button');
   toggleBtn.id = 'ocs-toggle-hidden-btn';
   toggleBtn.innerHTML = showHiddenRoles ? '🙈 Hide Hidden' : '👁️ Show Hidden';
@@ -251,6 +498,7 @@ function injectFloatingActionUI() {
   });
 
   bar.appendChild(totalCountBtn);
+  bar.appendChild(scanBtn);
   bar.appendChild(notepadBtn);
   bar.appendChild(toggleBtn);
   document.body.appendChild(bar);

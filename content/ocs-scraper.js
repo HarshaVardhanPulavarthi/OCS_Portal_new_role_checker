@@ -213,5 +213,8 @@ function sleep(ms) {
 }
 
 function notifyProgress(msg) {
-  chrome.runtime.sendMessage({ type: 'PROGRESS_UPDATE', text: msg });
+  chrome.runtime.sendMessage({ type: 'PROGRESS_UPDATE', text: msg }).catch?.(() => {});
+  try {
+    window.dispatchEvent(new CustomEvent('ocs-scan-progress', { detail: { text: msg } }));
+  } catch (e) {}
 }
