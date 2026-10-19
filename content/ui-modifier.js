@@ -424,7 +424,42 @@ function injectFloatingActionUI() {
     });
   });
 
-  // 3. Floating Notepad Button
+  // 3. Floating OA & PPT Calendar Sync Button
+  const calendarBtn = document.createElement('button');
+  calendarBtn.id = 'ocs-calendar-btn';
+  calendarBtn.innerHTML = '📅 Sync OAs';
+  calendarBtn.title = 'Sync applied company OAs & PPTs to Google Calendar (Year 2026, 10m & 1d reminders)';
+  Object.assign(calendarBtn.style, {
+    padding: '9px 18px',
+    backgroundColor: '#18181b',
+    color: '#fff',
+    border: '1px solid #33333d',
+    borderRadius: '24px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.25)',
+    cursor: 'pointer',
+    fontWeight: 'bold',
+    fontFamily: 'inherit',
+    fontSize: '13.5px',
+    transition: 'all 0.2s ease',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    whiteSpace: 'nowrap'
+  });
+
+  calendarBtn.addEventListener('mouseenter', () => {
+    calendarBtn.style.transform = 'translateY(-2px)';
+    calendarBtn.style.borderColor = '#4f4f5a';
+  });
+  calendarBtn.addEventListener('mouseleave', () => {
+    calendarBtn.style.transform = 'translateY(0)';
+    calendarBtn.style.borderColor = '#33333d';
+  });
+  calendarBtn.addEventListener('click', () => {
+    handleCalendarSyncClick(calendarBtn);
+  });
+
+  // 4. Floating Notepad Button
   const notepadBtn = document.createElement('button');
   notepadBtn.id = 'ocs-notepad-btn';
   notepadBtn.innerHTML = '📝 Notepad';
@@ -458,7 +493,7 @@ function injectFloatingActionUI() {
     setNotepadOpenState(!isNotepadOpen, true);
   });
 
-  // 4. Floating Toggle Button to Show/Hide Hidden Roles
+  // 5. Floating Toggle Button to Show/Hide Hidden Roles
   const toggleBtn = document.createElement('button');
   toggleBtn.id = 'ocs-toggle-hidden-btn';
   toggleBtn.innerHTML = showHiddenRoles ? '🙈 Hide Hidden' : '👁️ Show Hidden';
@@ -497,7 +532,7 @@ function injectFloatingActionUI() {
     document.querySelectorAll('.MuiDataGrid-row, [role="row"]').forEach(processRow);
   });
 
-  // 5. Subtle Vertical Divider
+  // 6. Subtle Vertical Divider
   const divider = document.createElement('div');
   Object.assign(divider.style, {
     width: '1px',
@@ -546,7 +581,7 @@ function injectFloatingActionUI() {
     return btn;
   }
 
-  // 6. Go to Top Button
+  // 7. Go to Top Button
   const scrollTopBtn = createScrollNavBtn(
     'ocs-scroll-top-btn',
     'Scroll to top of page',
@@ -558,7 +593,7 @@ function injectFloatingActionUI() {
     }
   );
 
-  // 7. Go to Bottom Button
+  // 8. Go to Bottom Button
   const scrollBottomBtn = createScrollNavBtn(
     'ocs-scroll-bottom-btn',
     'Scroll to bottom of page',
@@ -573,12 +608,559 @@ function injectFloatingActionUI() {
 
   bar.appendChild(totalCountBtn);
   bar.appendChild(scanBtn);
+  bar.appendChild(calendarBtn);
   bar.appendChild(notepadBtn);
   bar.appendChild(toggleBtn);
   bar.appendChild(divider);
   bar.appendChild(scrollTopBtn);
   bar.appendChild(scrollBottomBtn);
   document.body.appendChild(bar);
+}
+
+// ==========================================
+// OA & PPT Google Calendar Integration Module
+// ==========================================
+
+const DEFAULT_OA_SHEET_URL = "https://docs.google.com/spreadsheets/d/1usdyAQyK9IeUdhW9MBxINbWQA5M96CdPKSdU5ygbmEg/edit?gid=271247210#gid=271247210";
+
+function parseCSVLines(text) {
+  const lines = text.split(/\r?\n/);
+  const rows = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const cells = [];
+    let insideQuote = false;
+    let currentCell = '';
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        insideQuote = !insideQuote;
+      } else if (char === ',' && !insideQuote) {
+        cells.push(currentCell.trim());
+        currentCell = '';
+      } else {
+        currentCell += char;
+      }
+    }
+    cells.push(currentCell.trim());
+    rows.push(cells);
+  }
+  return rows;
+}
+
+function parseOAScheduleCSV(csvText) {
+  const rows = parseCSVLines(csvText);
+  const events = [];
+  let currentDate = '';
+
+  for (const row of rows) {
+    // Column index 1 typically has the Date (e.g. "19 October")
+    const rowDate = (row[1] || '').trim();
+    if (rowDate && /(?:january|february|march|april|may|june|july|august|september|october|november|december)/i.test(rowDate)) {
+      currentDate = rowDate;
+    }
+
+    if (!currentDate) continue;
+
+    // Scan columns in 5-tuples: [StartTime, EndTime, Company, POC, Mode]
+    for (let colIdx = 2; colIdx + 2 < row.length; colIdx += 5) {
+      const rawStart = (row[colIdx] || '').trim();
+      const rawEnd = (row[colIdx + 1] || '').trim();
+      const rawCompany = (row[colIdx + 2] || '').trim();
+      const rawPOC = (row[colIdx + 3] || '').trim();
+      const rawMode = (row[colIdx + 4] || '').trim();
+
+      if (rawCompany && rawCompany.length > 1 && !rawCompany.toLowerCase().startsWith('company')) {
+        let cleanCompany = rawCompany;
+        let mode = rawMode || 'Online';
+        if (cleanCompany.toLowerCase().includes('online')) {
+          cleanCompany = cleanCompany.replace(/online/gi, '').trim();
+          mode = 'Online';
+        } else if (cleanCompany.toLowerCase().includes('offline')) {
+          cleanCompany = cleanCompany.replace(/offline/gi, '').trim();
+          mode = 'Offline';
+        }
+
+        const startParsed = parseDateTimeTo2026(currentDate, rawStart);
+        const endParsed = parseDateTimeTo2026(currentDate, rawEnd) || (startParsed ? new Date(startParsed.getTime() + 90 * 60 * 1000) : null);
+
+        events.push({
+          date: currentDate,
+          startTime: rawStart,
+          endTime: rawEnd,
+          company: cleanCompany,
+          rawCompany: rawCompany,
+          poc: rawPOC,
+          mode: mode,
+          startDate: startParsed,
+          endDate: endParsed,
+          id: `${cleanCompany.toLowerCase().replace(/[^a-z0-9]/g, '')}_${currentDate.toLowerCase().replace(/[^a-z0-9]/g, '')}_${rawStart.toLowerCase().replace(/[^a-z0-9]/g, '')}`
+        });
+      }
+    }
+  }
+
+  return events;
+}
+
+function parseDateTimeTo2026(dateStr, timeStr) {
+  if (!dateStr) return null;
+  const monthMap = {
+    january: 0, february: 1, march: 2, april: 3, may: 4, june: 5,
+    july: 6, august: 7, september: 8, october: 9, november: 10, december: 11
+  };
+
+  const dateMatch = dateStr.trim().match(/(\d+)\s+([a-zA-Z]+)/);
+  if (!dateMatch) return null;
+  const day = parseInt(dateMatch[1], 10);
+  const monthName = dateMatch[2].toLowerCase();
+  const month = monthMap[monthName];
+  if (month === undefined) return null;
+
+  let hours = 10;
+  let minutes = 0;
+
+  if (timeStr) {
+    const timeMatch = timeStr.trim().match(/(\d+)(?::(\d+))?\s*(AM|PM)?/i);
+    if (timeMatch) {
+      hours = parseInt(timeMatch[1], 10);
+      minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+      const meridiem = (timeMatch[3] || '').toUpperCase();
+      if (meridiem === 'PM' && hours < 12) hours += 12;
+      if (meridiem === 'AM' && hours === 12) hours = 0;
+    }
+  }
+
+  // Return Date in UTC representing IST (UTC+5:30) in Year 2026
+  return new Date(Date.UTC(2026, month, day, hours - 5, minutes - 30));
+}
+
+function formatIcsDateTime(date) {
+  if (!date) return '';
+  return date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+}
+
+function generateIcsCalendar(events) {
+  let ics = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//IITD OCS Portal Enhancer//EN',
+    'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH',
+    'X-WR-CALNAME:OCS Applied OAs & PPTs (2026)',
+    'X-WR-TIMEZONE:Asia/Kolkata'
+  ];
+
+  for (const ev of events) {
+    if (!ev.startDate) continue;
+    const dtstart = formatIcsDateTime(ev.startDate);
+    const dtend = formatIcsDateTime(ev.endDate || new Date(ev.startDate.getTime() + 90 * 60 * 1000));
+    const now = formatIcsDateTime(new Date());
+
+    ics.push('BEGIN:VEVENT');
+    ics.push(`UID:${ev.id}@ocsportal`);
+    ics.push(`DTSTAMP:${now}`);
+    ics.push(`DTSTART:${dtstart}`);
+    ics.push(`DTEND:${dtend}`);
+    ics.push(`SUMMARY:OA: ${ev.company} [${ev.mode}]`);
+    ics.push(`DESCRIPTION:Company: ${ev.company}\\nDate: ${ev.date} 2026\\nTime: ${ev.startTime || 'TBD'}${ev.endTime ? ' - ' + ev.endTime : ''}\\nMode: ${ev.mode}${ev.poc ? '\\nPOC: ' + ev.poc : ''}\\nMatched from applied roles on OCS Portal.`);
+    ics.push(`LOCATION:${ev.mode}`);
+    ics.push('STATUS:CONFIRMED');
+
+    // Reminder 1: 1 day before (-P1D)
+    ics.push('BEGIN:VALARM');
+    ics.push('ACTION:DISPLAY');
+    ics.push(`DESCRIPTION:Reminder: Upcoming OA tomorrow for ${ev.company}`);
+    ics.push('TRIGGER:-P1D');
+    ics.push('END:VALARM');
+
+    // Reminder 2: 10 minutes before (-PT10M)
+    ics.push('BEGIN:VALARM');
+    ics.push('ACTION:DISPLAY');
+    ics.push(`DESCRIPTION:Reminder: OA starting in 10 minutes for ${ev.company}`);
+    ics.push('TRIGGER:-PT10M');
+    ics.push('END:VALARM');
+
+    ics.push('END:VEVENT');
+  }
+
+  ics.push('END:VCALENDAR');
+  return ics.join('\r\n');
+}
+
+function generateGoogleCalendarUrl(ev) {
+  if (!ev.startDate) return 'https://calendar.google.com';
+  const dtstart = formatIcsDateTime(ev.startDate);
+  const dtend = formatIcsDateTime(ev.endDate || new Date(ev.startDate.getTime() + 90 * 60 * 1000));
+  const title = `OA: ${ev.company} [${ev.mode}]`;
+  const details = `Company: ${ev.company}\nDate: ${ev.date} 2026\nTime: ${ev.startTime || 'TBD'}${ev.endTime ? ' - ' + ev.endTime : ''}\nMode: ${ev.mode}${ev.poc ? '\nPOC: ' + ev.poc : ''}\nMatched from applied roles on OCS Portal.`;
+  return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(title)}&dates=${dtstart}/${dtend}&details=${encodeURIComponent(details)}&location=${encodeURIComponent(ev.mode)}`;
+}
+
+function downloadIcsCalendarFile(icsContent, filename = 'OCS_Applied_OAs_2026.ics') {
+  const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, 1000);
+}
+
+function matchCompanyNames(sheetCompany, appliedCompany) {
+  if (!sheetCompany || !appliedCompany) return false;
+  const s = sheetCompany.toLowerCase().replace(/[^a-z0-9]/g, '');
+  const a = appliedCompany.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!s || !a) return false;
+  if (s === a) return true;
+  if (s.includes(a) || a.includes(s)) return true;
+  if (s.length >= 5 && a.length >= 5) {
+    if (s.startsWith(a.slice(0, 6)) || a.startsWith(s.slice(0, 6))) return true;
+  }
+  return false;
+}
+
+function getAppliedCompaniesList() {
+  const companies = new Set();
+  const rows = document.querySelectorAll('.MuiDataGrid-row, [role="row"]');
+  rows.forEach(row => {
+    const appliedCell = row.querySelector('[data-field="applied"]') || row.querySelector('[data-field="registered"]');
+    const companyCell = row.querySelector('[data-field="company"]');
+    if (appliedCell && companyCell) {
+      const txt = appliedCell.textContent.trim().toUpperCase();
+      if (txt === 'YES') {
+        const comp = companyCell.textContent.trim();
+        if (comp) companies.add(comp);
+      }
+    }
+  });
+
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['allRoles'], (res) => {
+      const allRoles = res.allRoles || [];
+      allRoles.forEach(r => {
+        const reg = (r.registered || r.applied || '').trim().toUpperCase();
+        if (reg === 'YES' && r.company) {
+          companies.add(r.company.trim());
+        }
+      });
+      resolve(Array.from(companies));
+    });
+  });
+}
+
+async function handleCalendarSyncClick(btn) {
+  const originalHTML = btn.innerHTML;
+  btn.innerHTML = '<span class="ocs-spinning">🔄</span> Syncing...';
+  btn.style.borderColor = '#3b82f6';
+
+  chrome.storage.local.get(['oaSheetUrl', 'syncedCalendarEvents'], async (res) => {
+    const sheetUrl = res.oaSheetUrl || DEFAULT_OA_SHEET_URL;
+    let syncedEventsMap = res.syncedCalendarEvents || {};
+
+    const appliedCompanies = await getAppliedCompaniesList();
+
+    chrome.runtime.sendMessage({ action: 'FETCH_OA_SCHEDULE', sheetUrl }, (response) => {
+      btn.innerHTML = originalHTML;
+      btn.style.borderColor = '#33333d';
+
+      if (!response || response.status === 'error') {
+        alert('Could not fetch OA schedule from Google Sheet: ' + (response ? response.error : 'Network error'));
+        return;
+      }
+
+      if (response.status === 'auth_required') {
+        showSheetAuthModal(sheetUrl);
+        return;
+      }
+
+      const allEvents = parseOAScheduleCSV(response.data || '');
+      
+      // Match events against applied companies
+      let matchedEvents = allEvents.filter(ev => {
+        return appliedCompanies.some(appComp => matchCompanyNames(ev.company, appComp));
+      });
+
+      // Separate new vs already synced
+      const newEvents = matchedEvents.filter(ev => !syncedEventsMap[ev.id]);
+
+      // If new events found, download .ics and record in synced map
+      if (newEvents.length > 0) {
+        const icsContent = generateIcsCalendar(newEvents);
+        downloadIcsCalendarFile(icsContent, `OCS_Applied_OAs_2026_${newEvents.length}new.ics`);
+        
+        newEvents.forEach(ev => {
+          syncedEventsMap[ev.id] = {
+            company: ev.company,
+            date: ev.date,
+            time: ev.startTime,
+            syncedAt: Date.now()
+          };
+        });
+        chrome.storage.local.set({ syncedCalendarEvents: syncedEventsMap });
+      }
+
+      openOACalendarModal(matchedEvents, allEvents, appliedCompanies, syncedEventsMap, sheetUrl);
+    });
+  });
+}
+
+function showSheetAuthModal(sheetUrl) {
+  let modal = document.getElementById('ocs-oa-auth-modal');
+  if (modal) modal.remove();
+
+  modal = document.createElement('div');
+  modal.id = 'ocs-oa-auth-modal';
+  Object.assign(modal.style, {
+    position: 'fixed',
+    top: '0',
+    left: '0',
+    width: '100vw',
+    height: '100vh',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backdropFilter: 'blur(8px)',
+    zIndex: '200000',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+  });
+
+  const card = document.createElement('div');
+  Object.assign(card.style, {
+    width: '460px',
+    backgroundColor: '#18181b',
+    border: '1px solid #3f3f46',
+    borderRadius: '16px',
+    padding: '24px',
+    color: '#f4f4f5',
+    boxShadow: '0 24px 48px rgba(0,0,0,0.6)'
+  });
+
+  card.innerHTML = `
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <h3 style="margin:0; font-size:17px; font-weight:700;">🔐 Google Sheet Session Needed</h3>
+      <button id="ocs-auth-close" style="background:none; border:none; color:#a1a1aa; font-size:20px; cursor:pointer;">✕</button>
+    </div>
+    <p style="font-size:13.5px; color:#a1a1aa; line-height:1.5; margin-bottom:16px;">
+      The OA schedule Google Sheet is private to your university Google Account. Please click below to open the sheet once so Chrome can access your session, then tap <b>Sync OAs</b> again.
+    </p>
+    <div style="display:flex; gap:10px;">
+      <a href="${sheetUrl}" target="_blank" id="ocs-open-sheet-btn" style="flex:1; text-align:center; padding:10px 16px; background-color:#2563eb; color:#fff; border-radius:10px; font-weight:600; text-decoration:none; font-size:13.5px;">
+        🌐 Open OA Google Sheet
+      </a>
+      <button id="ocs-auth-cancel" style="padding:10px 16px; background-color:#27272a; color:#f4f4f5; border:1px solid #3f3f46; border-radius:10px; font-size:13.5px; cursor:pointer;">Cancel</button>
+    </div>
+  `;
+
+  modal.appendChild(card);
+  document.body.appendChild(modal);
+
+  const close = () => modal.remove();
+  card.querySelector('#ocs-auth-close').addEventListener('click', close);
+  card.querySelector('#ocs-auth-cancel').addEventListener('click', close);
+  card.querySelector('#ocs-open-sheet-btn').addEventListener('click', () => {
+    setTimeout(close, 1500);
+  });
+}
+
+function openOACalendarModal(matchedEvents, allEvents, appliedCompanies, syncedEventsMap, currentSheetUrl) {
+  let modal = document.getElementById('ocs-oa-calendar-modal');
+  if (modal) modal.remove();
+
+  modal = document.createElement('div');
+  modal.id = 'ocs-oa-calendar-modal';
+  Object.assign(modal.style, {
+    position: 'fixed',
+    top: '0',
+    left: '0',
+    width: '100vw',
+    height: '100vh',
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    backdropFilter: 'blur(10px)',
+    zIndex: '200000',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
+  });
+
+  const card = document.createElement('div');
+  Object.assign(card.style, {
+    width: '680px',
+    maxWidth: 'calc(100vw - 32px)',
+    maxHeight: '85vh',
+    backgroundColor: '#18181b',
+    border: '1px solid #3f3f46',
+    borderRadius: '16px',
+    padding: '24px',
+    color: '#f4f4f5',
+    boxShadow: '0 24px 48px rgba(0,0,0,0.6)',
+    display: 'flex',
+    flexDirection: 'column',
+    boxSizing: 'border-box'
+  });
+
+  const displayList = matchedEvents.length > 0 ? matchedEvents : allEvents;
+  const isShowingAll = matchedEvents.length === 0;
+
+  const header = document.createElement('div');
+  header.style.display = 'flex';
+  header.style.justifyContent = 'space-between';
+  header.style.alignItems = 'center';
+  header.style.marginBottom = '14px';
+
+  header.innerHTML = `
+    <div>
+      <h2 style="margin:0; font-size:18px; font-weight:700; display:flex; align-items:center; gap:8px;">
+        📅 OA & PPT Calendar Sync (Year 2026)
+      </h2>
+      <p style="margin:4px 0 0 0; font-size:12.5px; color:#a1a1aa;">
+        Automatic 2-reminder alerts: 🔔 10 min before & 🔔 1 day before
+      </p>
+    </div>
+    <button id="ocs-modal-close-btn" style="background:none; border:none; color:#a1a1aa; font-size:22px; cursor:pointer; line-height:1;">✕</button>
+  `;
+
+  // Info Banner
+  const banner = document.createElement('div');
+  Object.assign(banner.style, {
+    backgroundColor: '#27272a',
+    border: '1px solid #3f3f46',
+    borderRadius: '10px',
+    padding: '12px 14px',
+    marginBottom: '14px',
+    fontSize: '13px',
+    lineHeight: '1.4'
+  });
+
+  if (appliedCompanies.length > 0) {
+    banner.innerHTML = `
+      <div style="font-weight:600; color:#93c5fd; margin-bottom:2px;">
+        ✓ Applied Companies on Portal (${appliedCompanies.length}):
+      </div>
+      <div style="color:#d4d4d8; font-size:12px; margin-bottom:6px;">
+        ${appliedCompanies.slice(0, 10).join(', ')}${appliedCompanies.length > 10 ? ` +${appliedCompanies.length - 10} more` : ''}
+      </div>
+      <div style="font-weight:600; color:#86efac;">
+        Matched ${matchedEvents.length} OA schedules (${matchedEvents.filter(e => !syncedEventsMap[e.id]).length} new)
+      </div>
+    `;
+  } else {
+    banner.innerHTML = `
+      <div style="font-weight:600; color:#fbbf24;">
+        ℹ️ No companies marked as "Applied (YES)" detected yet on portal.
+      </div>
+      <div style="color:#a1a1aa; font-size:12px;">
+        Showing all upcoming OAs from schedule (${allEvents.length} Total). Click any to add directly to Google Calendar.
+      </div>
+    `;
+  }
+
+  // Scrollable list container
+  const listContainer = document.createElement('div');
+  Object.assign(listContainer.style, {
+    flex: '1',
+    overflowY: 'auto',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    paddingRight: '4px',
+    marginBottom: '16px'
+  });
+
+  displayList.forEach(ev => {
+    const isSynced = !!syncedEventsMap[ev.id];
+    const isOnline = ev.mode.toLowerCase().includes('online');
+    const gcalUrl = generateGoogleCalendarUrl(ev);
+
+    const item = document.createElement('div');
+    Object.assign(item.style, {
+      backgroundColor: '#202024',
+      border: isSynced ? '1px solid #27272a' : '1px solid #3b82f6',
+      borderRadius: '10px',
+      padding: '10px 14px',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '12px'
+    });
+
+    item.innerHTML = `
+      <div style="flex:1;">
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:3px;">
+          <span style="font-weight:700; font-size:14.5px; color:#fff;">${ev.company}</span>
+          <span style="font-size:11px; font-weight:600; padding:2px 8px; border-radius:12px; background-color:${isOnline ? '#1e3a8a' : '#14532d'}; color:${isOnline ? '#93c5fd' : '#86efac'};">
+            ${ev.mode}
+          </span>
+          ${isSynced ? '<span style="font-size:11px; color:#a1a1aa; background:#27272a; padding:2px 6px; border-radius:8px;">✓ Synced</span>' : '<span style="font-size:11px; color:#86efac; background:#064e3b; padding:2px 6px; border-radius:8px;">New</span>'}
+        </div>
+        <div style="font-size:12.5px; color:#d4d4d8;">
+          📅 <b>${ev.date} 2026</b> • ⏰ ${ev.startTime || 'TBD'}${ev.endTime ? ' – ' + ev.endTime : ''} ${ev.poc ? `• 👤 ${ev.poc}` : ''}
+        </div>
+      </div>
+      <div>
+        <a href="${gcalUrl}" target="_blank" style="padding:6px 12px; background-color:#2563eb; color:#fff; border-radius:8px; font-size:12px; font-weight:600; text-decoration:none; display:inline-flex; align-items:center; gap:4px; white-space:nowrap;">
+          + Google Calendar
+        </a>
+      </div>
+    `;
+
+    listContainer.appendChild(item);
+  });
+
+  // Footer Actions
+  const footer = document.createElement('div');
+  footer.style.display = 'flex';
+  footer.style.justifyContent = 'space-between';
+  footer.style.alignItems = 'center';
+  footer.style.gap = '10px';
+  footer.style.borderTop = '1px solid #2e2e33';
+  footer.style.paddingTop = '14px';
+
+  const downloadBtn = document.createElement('button');
+  downloadBtn.innerHTML = `📥 Download .ics (${displayList.length} Events)`;
+  Object.assign(downloadBtn.style, {
+    padding: '9px 16px',
+    backgroundColor: '#10b981',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '10px',
+    fontWeight: '700',
+    fontSize: '13px',
+    cursor: 'pointer'
+  });
+  downloadBtn.addEventListener('click', () => {
+    const ics = generateIcsCalendar(displayList);
+    downloadIcsCalendarFile(ics, `OCS_Applied_OAs_2026.ics`);
+  });
+
+  const gcalSettingsLink = document.createElement('a');
+  gcalSettingsLink.href = 'https://calendar.google.com/calendar/u/0/r/settings/export';
+  gcalSettingsLink.target = '_blank';
+  gcalSettingsLink.innerHTML = '🌐 Open Google Calendar Import';
+  Object.assign(gcalSettingsLink.style, {
+    color: '#93c5fd',
+    fontSize: '13px',
+    textDecoration: 'none',
+    fontWeight: '600'
+  });
+
+  footer.appendChild(downloadBtn);
+  footer.appendChild(gcalSettingsLink);
+
+  card.appendChild(header);
+  card.appendChild(banner);
+  card.appendChild(listContainer);
+  card.appendChild(footer);
+  modal.appendChild(card);
+  document.body.appendChild(modal);
+
+  card.querySelector('#ocs-modal-close-btn').addEventListener('click', () => modal.remove());
 }
 
 // Helpers for Detecting and Updating Total Companies on Portal
