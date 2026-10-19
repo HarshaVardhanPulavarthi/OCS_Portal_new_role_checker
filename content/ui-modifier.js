@@ -331,6 +331,10 @@ function injectNotepadPanel() {
     boxSizing: 'border-box'
   });
 
+  // Stop portal & DataGrid from catching keyboard events inside notepad
+  panel.addEventListener('keydown', (e) => e.stopPropagation());
+  panel.addEventListener('keyup', (e) => e.stopPropagation());
+
   // Header Bar
   const header = document.createElement('div');
   header.id = 'ocs-notepad-header';
@@ -545,6 +549,7 @@ function injectNotepadPanel() {
     });
 
     textarea.addEventListener('keydown', (e) => {
+      e.stopPropagation();
       if (e.isComposing) return;
 
       const isMod = e.metaKey || e.ctrlKey;
@@ -697,6 +702,9 @@ function injectNotepadPanel() {
       undoManager.record(textarea.value, textarea.selectionStart, true);
       setTimeout(() => applyAutoNumbering(textarea, undoManager), 0);
     });
+
+    textarea.addEventListener('keyup', (e) => e.stopPropagation());
+    textarea.addEventListener('keypress', (e) => e.stopPropagation());
 
     col.appendChild(colHeader);
     col.appendChild(textarea);
