@@ -11,7 +11,7 @@
     "notifications"
   ],
   "host_permissions": [
-    "*://*/*"
+    "*://ocs.iith.ac.in/*"
   ],
   "action": {
     "default_popup": "popup/popup.html"
@@ -23,7 +23,7 @@
   "content_scripts": [
     {
       "matches": [
-        "*://*/*"
+        "*://ocs.iith.ac.in/*"
       ],
       "js": [
         "content/ui-modifier.js"

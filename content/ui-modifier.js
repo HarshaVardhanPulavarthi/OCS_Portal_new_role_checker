@@ -120,9 +120,17 @@ function handleScanProgressText(text) {
   scanBtn.title = `Scan in progress: ${text}`;
 }
 
-// Load state from Chrome Storage
-const currentUrl = window.location.href.toLowerCase();
-if (currentUrl.includes('ocs') || currentUrl.includes('iith') || currentUrl.includes('localhost') || currentUrl.includes('127.0.0.1') || currentUrl.includes('ocs_debug') || currentUrl.startsWith('file:')) {
+// Ensure this script strictly runs only on the OCS IITH portal (https://ocs.iith.ac.in)
+function isOcsPortal() {
+  try {
+    const hostname = window.location.hostname.toLowerCase();
+    return hostname === 'ocs.iith.ac.in' || hostname.endsWith('.ocs.iith.ac.in');
+  } catch (e) {
+    return false;
+  }
+}
+
+if (isOcsPortal()) {
   chrome.storage.local.get(['hiddenRoles', 'roleNotes', 'notepadData', 'isNotepadOpen', 'totalCompaniesCount', 'allRoles', 'notepadSize'], (result) => {
     hiddenRoles = result.hiddenRoles || [];
     roleNotes = result.roleNotes || {};

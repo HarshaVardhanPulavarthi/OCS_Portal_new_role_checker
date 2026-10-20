@@ -76,9 +76,17 @@ async function startScan(senderTabId) {
         throw new Error("No active tab found.");
       }
       
-      const tabUrl = tabs[0].url ? tabs[0].url.toLowerCase() : '';
-      if (!tabUrl.includes('ocs') || !tabUrl.includes('iith')) {
-        throw new Error("This extension only works on the OCS IITH portal.");
+      const tabUrl = tabs[0].url || '';
+      let isOcs = false;
+      try {
+        const parsed = new URL(tabUrl);
+        isOcs = parsed.hostname === 'ocs.iith.ac.in' || parsed.hostname.endsWith('.ocs.iith.ac.in');
+      } catch (e) {
+        isOcs = false;
+      }
+
+      if (!isOcs) {
+        throw new Error("This extension only works on the OCS IITH portal (https://ocs.iith.ac.in).");
       }
 
       tabId = tabs[0].id;

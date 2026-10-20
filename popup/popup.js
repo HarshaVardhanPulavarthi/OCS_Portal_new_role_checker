@@ -22,11 +22,21 @@ document.addEventListener('DOMContentLoaded', () => {
   // Check if we are on the OCS page (for UI feedback)
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const currentTab = tabs[0];
-    if (currentTab && currentTab.url && currentTab.url.toLowerCase().includes('ocs') && currentTab.url.toLowerCase().includes('iith')) {
+    let isOcs = false;
+    if (currentTab && currentTab.url) {
+      try {
+        const parsed = new URL(currentTab.url);
+        isOcs = parsed.hostname === 'ocs.iith.ac.in' || parsed.hostname.endsWith('.ocs.iith.ac.in');
+      } catch (e) {
+        isOcs = false;
+      }
+    }
+
+    if (isOcs) {
       statusText.textContent = 'Ready';
       statusText.className = 'success';
     } else {
-      statusText.textContent = 'Please open the OCS portal';
+      statusText.textContent = 'Please open https://ocs.iith.ac.in';
       checkBtn.disabled = true;
     }
   });
