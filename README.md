@@ -31,7 +31,8 @@ A dedicated, dual-column priority notepad docked right inside the portal:
 - **Live Pagination Detection**: Automatically detects the exact total company count directly from the portal's MUI DataGrid pagination (e.g., `1–50 of 138` $\rightarrow$ **🏢 Total: 138**).
 - **Persistent Across Reloads**: Remembers the latest count so you always know the exact tally even before table renders.
 - **Smooth Scroll Shortcut**: Clicking the badge smoothly scrolls your page straight to the job table and footer pagination.
-- **Top & Bottom Shortcuts (`⬆` & `⬇`)**: Compact circular buttons at the right edge of the floating dock let you instantly glide to the very top or bottom of the page and table without manual scrolling.
+- **Left & Right Page Navigation (`◀` & `▶`)**: Directly triggers the table's next/previous pagination buttons from the floating dock so you never need to aim for the corner pagination arrows. Automatically dims when at the first or last page.
+- **Top & Bottom Shortcuts (`⬆` & `⬇`)**: Compact circular buttons let you instantly glide to the very top or bottom of the page and table without manual trackpad scrolling.
 
 ---
 

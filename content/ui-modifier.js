@@ -250,6 +250,7 @@ function initWhenReady() {
       injectNotepadPanel();
     }
     updatePortalTotalCount();
+    updateNavButtonsState();
   }, 1000);
 
   const checkInterval = setInterval(() => {
@@ -531,10 +532,12 @@ function injectFloatingActionUI() {
     });
 
     btn.addEventListener('mouseenter', () => {
-      btn.style.transform = 'translateY(-2px)';
-      btn.style.borderColor = '#4f4f5a';
-      btn.style.backgroundColor = '#27272a';
-      btn.style.color = '#ffffff';
+      if (btn.style.opacity !== '0.35') {
+        btn.style.transform = 'translateY(-2px)';
+        btn.style.borderColor = '#4f4f5a';
+        btn.style.backgroundColor = '#27272a';
+        btn.style.color = '#ffffff';
+      }
     });
     btn.addEventListener('mouseleave', () => {
       btn.style.transform = 'translateY(0)';
@@ -546,7 +549,23 @@ function injectFloatingActionUI() {
     return btn;
   }
 
-  // 6. Go to Top Button
+  // 6. Left Page (Previous Page) Button
+  const prevPageBtn = createScrollNavBtn(
+    'ocs-prev-page-btn',
+    'Go to previous page (Left page)',
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
+    () => triggerTablePagination('prev')
+  );
+
+  // 7. Right Page (Next Page) Button
+  const nextPageBtn = createScrollNavBtn(
+    'ocs-next-page-btn',
+    'Go to next page (Right page)',
+    '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>',
+    () => triggerTablePagination('next')
+  );
+
+  // 8. Go to Top Button
   const scrollTopBtn = createScrollNavBtn(
     'ocs-scroll-top-btn',
     'Scroll to top of page',
@@ -558,7 +577,7 @@ function injectFloatingActionUI() {
     }
   );
 
-  // 7. Go to Bottom Button
+  // 9. Go to Bottom Button
   const scrollBottomBtn = createScrollNavBtn(
     'ocs-scroll-bottom-btn',
     'Scroll to bottom of page',
@@ -576,9 +595,87 @@ function injectFloatingActionUI() {
   bar.appendChild(notepadBtn);
   bar.appendChild(toggleBtn);
   bar.appendChild(divider);
+  bar.appendChild(prevPageBtn);
+  bar.appendChild(nextPageBtn);
   bar.appendChild(scrollTopBtn);
   bar.appendChild(scrollBottomBtn);
   document.body.appendChild(bar);
+
+  updateNavButtonsState();
+}
+
+// Helpers for Table Pagination Navigation via Dock Buttons
+function findPaginationBtn(direction) {
+  if (direction === 'prev') {
+    const btn = document.querySelector('button[aria-label="Go to previous page"], button[title="Go to previous page"], button[aria-label*="previous" i]');
+    if (btn) return btn;
+    const actions = document.querySelector('.MuiTablePagination-actions');
+    if (actions) {
+      const buttons = actions.querySelectorAll('button');
+      if (buttons.length >= 2) return buttons[0];
+    }
+    return null;
+  } else {
+    const btn = document.querySelector('button[aria-label="Go to next page"], button[title="Go to next page"], button[aria-label*="next" i]');
+    if (btn) return btn;
+    const actions = document.querySelector('.MuiTablePagination-actions');
+    if (actions) {
+      const buttons = actions.querySelectorAll('button');
+      if (buttons.length >= 2) return buttons[buttons.length - 1];
+    }
+    return null;
+  }
+}
+
+function triggerTablePagination(direction) {
+  const btn = findPaginationBtn(direction);
+  if (!btn) {
+    const footer = document.querySelector('.MuiDataGrid-footerContainer') || document.querySelector('.MuiTablePagination-root');
+    if (footer) {
+      const buttons = footer.querySelectorAll('button');
+      if (direction === 'prev' && buttons.length >= 2) {
+        buttons[buttons.length - 2].click();
+      } else if (direction === 'next' && buttons.length >= 1) {
+        buttons[buttons.length - 1].click();
+      }
+    }
+    setTimeout(updateNavButtonsState, 250);
+    return;
+  }
+
+  const isDisabled = btn.disabled || btn.getAttribute('aria-disabled') === 'true';
+  if (isDisabled) {
+    updateNavButtonsState();
+    return;
+  }
+
+  btn.click();
+  setTimeout(() => {
+    updatePortalTotalCount();
+    updateNavButtonsState();
+  }, 250);
+}
+
+function updateNavButtonsState() {
+  const prevTableBtn = findPaginationBtn('prev');
+  const nextTableBtn = findPaginationBtn('next');
+
+  const prevDockBtn = document.getElementById('ocs-prev-page-btn');
+  const nextDockBtn = document.getElementById('ocs-next-page-btn');
+
+  if (prevDockBtn) {
+    const isPrevDisabled = !prevTableBtn || prevTableBtn.disabled || prevTableBtn.getAttribute('aria-disabled') === 'true';
+    prevDockBtn.style.opacity = isPrevDisabled ? '0.35' : '1';
+    prevDockBtn.style.cursor = isPrevDisabled ? 'not-allowed' : 'pointer';
+    prevDockBtn.title = isPrevDisabled ? 'First page (No previous page)' : 'Go to previous page';
+  }
+
+  if (nextDockBtn) {
+    const isNextDisabled = !nextTableBtn || nextTableBtn.disabled || nextTableBtn.getAttribute('aria-disabled') === 'true';
+    nextDockBtn.style.opacity = isNextDisabled ? '0.35' : '1';
+    nextDockBtn.style.cursor = isNextDisabled ? 'not-allowed' : 'pointer';
+    nextDockBtn.title = isNextDisabled ? 'Last page (No next page)' : 'Go to next page';
+  }
 }
 
 // Helpers for Detecting and Updating Total Companies on Portal
@@ -666,6 +763,7 @@ function observePagination() {
   if (target) {
     paginationObserver = new MutationObserver(() => {
       updatePortalTotalCount();
+      updateNavButtonsState();
     });
     paginationObserver.observe(target, { childList: true, subtree: true, characterData: true });
   }
