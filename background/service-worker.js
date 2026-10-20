@@ -35,53 +35,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (currentScanTabId) {
       chrome.tabs.sendMessage(currentScanTabId, message).catch(() => {});
     }
-  } else if (message.action === 'FETCH_OA_SCHEDULE') {
-    (async () => {
-      try {
-        const rawUrl = message.sheetUrl || "https://docs.google.com/spreadsheets/d/1usdyAQyK9IeUdhW9MBxINbWQA5M96CdPKSdU5ygbmEg/edit?gid=271247210#gid=271247210";
-        let exportUrl = rawUrl;
-        if (exportUrl.includes('/edit')) {
-          const gidMatch = rawUrl.match(/gid=([0-9]+)/);
-          const gid = gidMatch ? gidMatch[1] : '0';
-          exportUrl = exportUrl.replace(/\/edit.*$/, `/export?format=csv&gid=${gid}`);
-        } else if (!exportUrl.includes('format=csv')) {
-          exportUrl += (exportUrl.includes('?') ? '&' : '?') + 'format=csv';
-        }
-
-        // Try direct fetch with credentials
-        let res = await fetch(exportUrl, { credentials: 'include' });
-        let text = await res.text();
-
-        // If Google redirected to login HTML, check if user has the spreadsheet tab open to read with their session
-        if (text.includes('Sign in to your Google Account') || text.includes('accounts.google.com') || (text.includes('<html') && text.includes('<!DOCTYPE html>'))) {
-          const tabs = await chrome.tabs.query({ url: "*://docs.google.com/spreadsheets/*" });
-          const matchingTab = tabs.find(t => t.url && (t.url.includes('1usdyAQyK9IeUdhW9MBxINbWQA5M96CdPKSdU5ygbmEg') || t.url.includes('spreadsheets')));
-          if (matchingTab) {
-            const results = await chrome.scripting.executeScript({
-              target: { tabId: matchingTab.id },
-              func: async (url) => {
-                const r = await fetch(url, { credentials: 'include' });
-                return await r.text();
-              },
-              args: [exportUrl]
-            });
-            if (results && results[0] && results[0].result && !results[0].result.includes('accounts.google.com')) {
-              text = results[0].result;
-            }
-          }
-        }
-
-        if (text.includes('accounts.google.com') || text.includes('Sign in to your Google Account')) {
-          sendResponse({ status: 'auth_required', url: rawUrl });
-          return;
-        }
-
-        sendResponse({ status: 'success', data: text });
-      } catch (err) {
-        sendResponse({ status: 'error', error: err.message || String(err) });
-      }
-    })();
-    return true;
   }
   return true;
 });

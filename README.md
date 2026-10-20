@@ -74,18 +74,9 @@ A dedicated, dual-column priority notepad docked right inside the portal:
 - **Smart Comparison Engine**: Normalizes role titles and company names to compare current portal listings with your saved database.
 - **Desktop Notifications**: Triggers native Chrome alerts displaying newly added company names, job profiles, and CTC packages.
 
-### 8. 📅 OA & PPT Google Calendar Sync
-- **1-Click Dock Action (`📅 Sync OAs`)**: Reads your live Google Sheet OA & PPT schedule and cross-references it with all companies where you've marked **`Applied = YES`**.
-- **Year 2026 Normalization**: Automatically converts all schedule dates to 2026 and sets appropriate Indian Standard Time (IST) slots.
-- **Two Pre-configured Reminders**:
-  - 🔔 **10 minutes before** the assessment begins.
-  - 🔔 **1 day before** (24 hours alert) to prepare.
-- **Zero Duplicates**: Keeps a synced registry in local storage so tapping `Sync OAs` only pulls and notifies you about newly added or updated tests.
-- **Seamless Google Calendar Integration**: Generates an auto-importable `.ics` calendar bundle with reminders embedded, alongside direct 1-click Google Calendar web event creation buttons.
-
 ---
 
-### 9. 📊 Standalone Database Dashboard
+### 8. 📊 Standalone Database Dashboard
 - Access `database/database.html` anytime to browse your full historical archive of scraped roles.
 - Features real-time search across company names, role titles, and CTC details.
 
