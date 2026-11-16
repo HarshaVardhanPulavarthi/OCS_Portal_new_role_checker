@@ -10,6 +10,7 @@ let isScanning = false;
 let scanState = 'IDLE'; // 'IDLE' | 'SCANNING' | 'NEEDS_SAVE' | 'SAVING' | 'SAVED' | 'UP_TO_DATE' | 'ERROR'
 let scanRevertTimer = null;
 let lastScanNewCount = 0;
+let lastScannedRolesList = [];
 
 function ensureGlobalStyles() {
   if (document.getElementById('ocs-ui-styles')) return;
@@ -23,6 +24,56 @@ function ensureGlobalStyles() {
     .ocs-spinning {
       display: inline-block;
       animation: ocs-spin 1s linear infinite;
+    }
+    @keyframes ocs-panel-slide-up {
+      from {
+        opacity: 0;
+        transform: translate(-50%, 14px) scale(0.97);
+      }
+      to {
+        opacity: 1;
+        transform: translate(-50%, 0) scale(1);
+      }
+    }
+    .ocs-custom-scroll::-webkit-scrollbar {
+      width: 6px;
+    }
+    .ocs-custom-scroll::-webkit-scrollbar-track {
+      background: rgba(0, 0, 0, 0.2);
+      border-radius: 4px;
+    }
+    .ocs-custom-scroll::-webkit-scrollbar-thumb {
+      background: #3f3f46;
+      border-radius: 4px;
+    }
+    .ocs-custom-scroll::-webkit-scrollbar-thumb:hover {
+      background: #52525b;
+    }
+    /* OCS Full Table Expansion - All unhidden rows packed at top, full natural scrolling */
+    .MuiDataGrid-root {
+      height: auto !important;
+      max-height: none !important;
+    }
+    .MuiDataGrid-main {
+      height: auto !important;
+      max-height: none !important;
+    }
+    .MuiDataGrid-virtualScroller {
+      overflow-y: hidden !important;
+    }
+    .MuiDataGrid-virtualScrollerContent {
+      height: auto !important;
+    }
+    .MuiDataGrid-virtualScrollerRenderZone {
+      position: relative !important;
+      transform: none !important;
+    }
+    .ocs-row-hidden {
+      display: none !important;
+    }
+    .ocs-row-dimmed {
+      opacity: 0.35 !important;
+      filter: grayscale(100%) !important;
     }
   `;
   (document.head || document.documentElement).appendChild(style);
@@ -82,13 +133,13 @@ function renderScanButtonState(btn) {
     btn.style.cursor = 'pointer';
   } else {
     // Default IDLE state
-    btn.innerHTML = `⚡ Scan Roles`;
+    btn.innerHTML = `⚡ Check New Companies`;
     btn.style.backgroundColor = '#18181b';
     btn.style.borderColor = '#33333d';
     btn.style.color = '#fff';
     btn.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)';
     btn.style.cursor = 'pointer';
-    btn.title = 'Scan OCS portal for new job postings and roles';
+    btn.title = 'Check OCS portal for new job postings and companies';
   }
 }
 
@@ -120,6 +171,66 @@ function handleScanProgressText(text) {
   scanBtn.title = `Scan in progress: ${text}`;
 }
 
+// Text normalization helper
+function cleanText(text) {
+  if (!text) return '';
+  return text.replace(/\u00a0/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+// Clean up legacy/broken storage entries (e.g. index-based collisions from old row recycling)
+function normalizeHiddenRoles(roles, allKnownRoles = []) {
+  if (!Array.isArray(roles)) return [];
+  const rolesMap = new Map();
+  if (Array.isArray(allKnownRoles)) {
+    allKnownRoles.forEach(r => {
+      if (r && r.dataId) rolesMap.set(String(r.dataId), r);
+      if (r && r.id) rolesMap.set(String(r.id), r);
+    });
+  }
+
+  let wasMigrated = false;
+  const cleaned = roles.map(item => {
+    if (typeof item === 'string' || typeof item === 'number') {
+      item = { posting_id: String(item) };
+      wasMigrated = true;
+    }
+    let comp = item.company ? cleanText(item.company) : '';
+    let title = item.title ? cleanText(item.title) : '';
+    if (title.toLowerCase() === 'add note' || title.toLowerCase() === '+ note') {
+      title = '';
+      wasMigrated = true;
+    }
+    
+    // If missing company, try looking up in known roles
+    if (!comp && item.posting_id && rolesMap.has(String(item.posting_id))) {
+      const known = rolesMap.get(String(item.posting_id));
+      comp = cleanText(known.company || '');
+      title = cleanText(known.title || '');
+      wasMigrated = true;
+    }
+
+    return {
+      posting_id: item.posting_id || '',
+      company: comp,
+      title: title,
+      hiddenAt: item.hiddenAt || Date.now()
+    };
+  }).filter(item => {
+    // Keep if it has a real company name
+    if (item.company && item.company !== 'Unknown' && item.company !== 'unknown') return true;
+    // Or if it has a real UUID / alphanumeric posting_id (NOT a 1- or 2-digit index from old row recycling)
+    if (item.posting_id && !/^\d{1,2}$/.test(String(item.posting_id))) return true;
+    wasMigrated = true;
+    return false;
+  });
+
+  if (wasMigrated) {
+    chrome.storage.local.set({ hiddenRoles: cleaned });
+  }
+
+  return cleaned;
+}
+
 // Ensure this script strictly runs only on the OCS IITH portal (https://ocs.iith.ac.in)
 function isOcsPortal() {
   try {
@@ -131,13 +242,20 @@ function isOcsPortal() {
 }
 
 if (isOcsPortal()) {
-  chrome.storage.local.get(['hiddenRoles', 'roleNotes', 'notepadData', 'isNotepadOpen', 'totalCompaniesCount', 'allRoles', 'notepadSize'], (result) => {
-    hiddenRoles = result.hiddenRoles || [];
+  chrome.storage.local.get(['hiddenRoles', 'roleNotes', 'notepadData', 'isNotepadOpen', 'totalCompaniesCount', 'allRoles', 'notepadSize', 'lastScannedNewRoles', 'pendingRoles'], (result) => {
+    hiddenRoles = normalizeHiddenRoles(result.hiddenRoles || [], result.allRoles || []);
     roleNotes = result.roleNotes || {};
     notepadData = result.notepadData || { top: '', decent: '' };
     isNotepadOpen = result.isNotepadOpen || false;
     notepadSize = result.notepadSize || { width: 560, height: 330 };
     totalCompaniesCount = result.totalCompaniesCount || (result.allRoles && result.allRoles.length ? result.allRoles.length : null);
+    if (result.lastScannedNewRoles && result.lastScannedNewRoles.length > 0) {
+      lastScannedRolesList = result.lastScannedNewRoles;
+      if (result.pendingRoles && result.pendingRoles.length > 0) {
+        scanState = 'NEEDS_SAVE';
+        lastScanNewCount = lastScannedRolesList.length;
+      }
+    }
     initWhenReady();
   });
 
@@ -145,7 +263,7 @@ if (isOcsPortal()) {
   chrome.storage.onChanged.addListener((changes, namespace) => {
     if (namespace === 'local') {
       let changed = false;
-      if (changes.hiddenRoles) { hiddenRoles = changes.hiddenRoles.newValue || []; changed = true; }
+      if (changes.hiddenRoles) { hiddenRoles = normalizeHiddenRoles(changes.hiddenRoles.newValue || []); changed = true; }
       if (changes.roleNotes) { roleNotes = changes.roleNotes.newValue || {}; changed = true; }
       if (changes.notepadData) {
         notepadData = changes.notepadData.newValue || { top: '', decent: '' };
@@ -166,8 +284,14 @@ if (isOcsPortal()) {
         totalCompaniesCount = changes.totalCompaniesCount.newValue;
         updateTotalCompaniesBadge();
       }
+      if (changes.lastScannedNewRoles) {
+        lastScannedRolesList = changes.lastScannedNewRoles.newValue || [];
+      }
       if (changed) {
-        document.querySelectorAll('.MuiDataGrid-row, [role="row"]').forEach(processRow);
+        document.querySelectorAll('.MuiDataGrid-row').forEach(row => {
+          delete row.dataset.ocsStateKey;
+        });
+        processAllVisibleRows();
       }
     }
   });
@@ -188,9 +312,12 @@ if (isOcsPortal()) {
       handleScanProgressText(message.text);
     } else if (message.type === 'SCAN_COMPLETE') {
       isScanning = false;
-      const { totalFound, newRoles, isFirstRun } = message.data || {};
+      const { totalFound, newRoles, isFirstRun, roles } = message.data || {};
       const scanBtn = document.getElementById('ocs-scan-btn');
       
+      const rolesList = roles || [];
+      lastScannedRolesList = rolesList;
+
       if (newRoles > 0 || isFirstRun) {
         scanState = 'NEEDS_SAVE';
         lastScanNewCount = isFirstRun ? totalFound : newRoles;
@@ -198,9 +325,20 @@ if (isOcsPortal()) {
           scanBtn.dataset.newCount = isFirstRun ? `${totalFound} Total` : `${newRoles}`;
         }
         renderScanButtonState(scanBtn);
+
+        // Store latest new roles in storage
+        chrome.storage.local.set({ lastScannedNewRoles: rolesList });
+
+        // Show the list of new companies directly above the task bar
+        showNewCompaniesPanel(rolesList, {
+          newRolesCount: newRoles,
+          totalFound: totalFound,
+          isFirstRun: isFirstRun
+        });
       } else {
         scanState = 'UP_TO_DATE';
         renderScanButtonState(scanBtn);
+        showUpToDatePopup(totalFound);
         clearTimeout(scanRevertTimer);
         scanRevertTimer = setTimeout(() => {
           if (scanState === 'UP_TO_DATE') {
@@ -218,6 +356,7 @@ if (isOcsPortal()) {
         scanBtn.title = `Error: ${message.error}`;
       }
       renderScanButtonState(scanBtn);
+      showScanErrorPopup(message.error);
       clearTimeout(scanRevertTimer);
       scanRevertTimer = setTimeout(() => {
         if (scanState === 'ERROR') {
@@ -228,6 +367,7 @@ if (isOcsPortal()) {
     } else if (message.type === 'DATABASE_UPDATED') {
       scanState = 'SAVED';
       renderScanButtonState();
+      updatePanelSaveButtonState('saved');
       clearTimeout(scanRevertTimer);
       scanRevertTimer = setTimeout(() => {
         if (scanState === 'SAVED') {
@@ -241,6 +381,39 @@ if (isOcsPortal()) {
 }
 
 let hasRemovedFilters = false;
+
+function expandDataGridToFull() {
+  const grid = document.querySelector('.MuiDataGrid-root, [role="grid"]');
+  if (!grid) return;
+  const scroller = grid.querySelector('.MuiDataGrid-virtualScroller') || document.querySelector('.MuiDataGrid-virtualScroller');
+  const content = grid.querySelector('.MuiDataGrid-virtualScrollerContent');
+  const main = grid.querySelector('.MuiDataGrid-main');
+
+  if (!scroller) return;
+
+  let targetHeight = 0;
+  if (content && content.style && content.style.height) {
+    targetHeight = parseInt(content.style.height, 10);
+  }
+  if (!targetHeight || targetHeight < 300) {
+    targetHeight = 2600;
+  }
+
+  if (scroller.clientHeight < targetHeight - 50) {
+    scroller.style.minHeight = `${targetHeight}px`;
+    scroller.style.height = `${targetHeight}px`;
+    scroller.style.overflowY = 'hidden';
+    if (main) {
+      main.style.height = 'auto';
+      main.style.maxHeight = 'none';
+    }
+    if (grid) {
+      grid.style.height = 'auto';
+      grid.style.maxHeight = 'none';
+    }
+    window.dispatchEvent(new Event('resize'));
+  }
+}
 
 function initWhenReady() {
   ensureGlobalStyles();
@@ -257,19 +430,23 @@ function initWhenReady() {
     if (!document.getElementById('ocs-notepad-panel')) {
       injectNotepadPanel();
     }
+    expandDataGridToFull();
+    attachScrollListeners();
     updatePortalTotalCount();
     updateNavButtonsState();
   }, 1000);
 
   const checkInterval = setInterval(() => {
-    const scroller = document.querySelector('.MuiDataGrid-virtualScroller');
-    if (scroller) {
+    const grid = document.querySelector('.MuiDataGrid-root, [role="grid"]');
+    const scroller = grid ? (grid.querySelector('.MuiDataGrid-virtualScroller') || grid) : document.querySelector('.MuiDataGrid-virtualScroller');
+    if (scroller || grid) {
       clearInterval(checkInterval);
-      startObserving(scroller);
+      expandDataGridToFull();
+      startObserving(scroller || grid);
       observePagination();
       updatePortalTotalCount();
       // Process already rendered rows
-      document.querySelectorAll('.MuiDataGrid-row, [role="row"]').forEach(processRow);
+      processAllVisibleRows();
       
       if (!hasRemovedFilters) {
         hasRemovedFilters = true;
@@ -280,6 +457,850 @@ function initWhenReady() {
     }
   }, 1000);
 }
+
+// Helper: Database Save Handler
+function triggerDatabaseSave() {
+  scanState = 'SAVING';
+  renderScanButtonState();
+  updatePanelSaveButtonState('saving');
+
+  chrome.runtime.sendMessage({ action: 'UPDATE_DATABASE' }, (response) => {
+    if (chrome.runtime.lastError || (response && response.status === 'error')) {
+      scanState = 'ERROR';
+      const errMsg = chrome.runtime.lastError ? chrome.runtime.lastError.message : response?.error;
+      const scanBtn = document.getElementById('ocs-scan-btn');
+      if (scanBtn) scanBtn.title = 'Error saving database: ' + errMsg;
+      renderScanButtonState(scanBtn);
+      updatePanelSaveButtonState('error', errMsg);
+      clearTimeout(scanRevertTimer);
+      scanRevertTimer = setTimeout(() => {
+        scanState = 'IDLE';
+        renderScanButtonState();
+      }, 3500);
+    } else {
+      scanState = 'SAVED';
+      renderScanButtonState();
+      updatePanelSaveButtonState('saved');
+      updatePortalTotalCount();
+      chrome.storage.local.remove('lastScannedNewRoles');
+      clearTimeout(scanRevertTimer);
+      scanRevertTimer = setTimeout(() => {
+        scanState = 'IDLE';
+        renderScanButtonState();
+      }, 2500);
+    }
+  });
+}
+
+// Helper: Toast Notifications
+function showToastNotification(text, duration = 3000) {
+  let toast = document.getElementById('ocs-toast-notification');
+  if (toast) toast.remove();
+
+  toast = document.createElement('div');
+  toast.id = 'ocs-toast-notification';
+  Object.assign(toast.style, {
+    position: 'fixed',
+    bottom: '90px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    backgroundColor: '#18181b',
+    color: '#f4f4f5',
+    padding: '9px 18px',
+    borderRadius: '20px',
+    border: '1px solid #3f3f46',
+    boxShadow: '0 12px 28px rgba(0,0,0,0.5)',
+    zIndex: '100005',
+    fontSize: '12.5px',
+    fontWeight: '600',
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    pointerEvents: 'none',
+    opacity: '0',
+    transition: 'opacity 0.2s ease, transform 0.2s ease',
+    whiteSpace: 'nowrap'
+  });
+  toast.textContent = text;
+  document.body.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateX(-50%) translateY(-4px)';
+  });
+
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(-50%) translateY(0)';
+    setTimeout(() => toast.remove(), 250);
+  }, duration);
+}
+
+// Helper: Scroll to Company Row in DataGrid
+function scrollToCompanyRow(role) {
+  if (!role) return;
+  let row = role.posting_id ? document.querySelector(`.MuiDataGrid-row[data-id="${role.posting_id}"]`) : null;
+  
+  if (!row && role.company) {
+    const allRows = Array.from(document.querySelectorAll('.MuiDataGrid-row, [role="row"]'));
+    row = allRows.find(r => {
+      const comp = r.querySelector('[data-field="company"]')?.textContent?.trim().toLowerCase();
+      return comp && comp === role.company.trim().toLowerCase();
+    });
+  }
+
+  if (row) {
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const originalBg = row.style.backgroundColor;
+    const originalBoxShadow = row.style.boxShadow;
+    const originalTransition = row.style.transition;
+    row.style.transition = 'all 0.3s ease';
+    row.style.backgroundColor = 'rgba(59, 130, 246, 0.25)';
+    row.style.boxShadow = '0 0 18px rgba(59, 130, 246, 0.7)';
+    setTimeout(() => {
+      row.style.backgroundColor = originalBg;
+      row.style.boxShadow = originalBoxShadow;
+      row.style.transition = originalTransition;
+    }, 2500);
+    showToastNotification(`Showing "${role.company}" in table`);
+  } else {
+    showToastNotification(`"${role.company}" is on another table page. Use ◀ ▶ buttons in dock.`);
+  }
+}
+
+// Helper: Quick-add company to Top or Decent Notepad
+function addCompanyToNotepad(companyName, targetList = 'top') {
+  if (!companyName) return false;
+  const cleanName = companyName.trim();
+  if (!cleanName) return false;
+
+  let currentText = notepadData[targetList] || '';
+  
+  const existingCompanies = currentText.split('\n')
+    .map(l => l.trim())
+    .filter(l => l && !l.startsWith('#'))
+    .map(l => l.replace(/^\d+[\.\)]\s*/, '').trim().toLowerCase());
+
+  if (existingCompanies.includes(cleanName.toLowerCase())) {
+    return 'already_exists';
+  }
+
+  let updatedText = currentText;
+  if (updatedText.trim().length > 0 && !updatedText.endsWith('\n')) {
+    updatedText += '\n';
+  }
+  updatedText += cleanName;
+
+  notepadData[targetList] = formatNotepadText(updatedText, { keepEmptyBullets: false });
+
+  const textEl = document.getElementById(targetList === 'top' ? 'ocs-notepad-top-text' : 'ocs-notepad-decent-text');
+  if (textEl) {
+    textEl.value = notepadData[targetList];
+  }
+
+  chrome.storage.local.set({ notepadData }, () => {
+    flashNotepadStatus('Saved ✓');
+  });
+
+  updateNotepadCounts();
+  return 'added';
+}
+
+// Floating List of New Companies above the Task Bar
+function showNewCompaniesPanel(roles, meta = {}) {
+  closeNewCompaniesPanel();
+  if (!roles || !Array.isArray(roles) || roles.length === 0) return;
+
+  const bar = document.getElementById('ocs-floating-bar');
+  const barRect = bar ? bar.getBoundingClientRect() : null;
+  const bottomOffset = barRect ? (window.innerHeight - barRect.top + 12) : 84;
+
+  const panel = document.createElement('div');
+  panel.id = 'ocs-new-companies-panel';
+  Object.assign(panel.style, {
+    position: 'fixed',
+    bottom: `${bottomOffset}px`,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    width: '540px',
+    maxWidth: 'calc(100vw - 32px)',
+    maxHeight: '480px',
+    backgroundColor: 'rgba(20, 20, 24, 0.96)',
+    backdropFilter: 'blur(20px)',
+    WebkitBackdropFilter: 'blur(20px)',
+    border: '1px solid rgba(255, 255, 255, 0.16)',
+    borderRadius: '16px',
+    boxShadow: '0 24px 50px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08)',
+    zIndex: '100000',
+    display: 'flex',
+    flexDirection: 'column',
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    overflow: 'hidden',
+    boxSizing: 'border-box',
+    animation: 'ocs-panel-slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1)'
+  });
+
+  // Stop portal key listeners inside panel
+  panel.addEventListener('keydown', (e) => e.stopPropagation());
+  panel.addEventListener('keyup', (e) => e.stopPropagation());
+
+  // Header
+  const header = document.createElement('div');
+  Object.assign(header.style, {
+    padding: '12px 16px',
+    backgroundColor: '#1b1b1f',
+    borderBottom: '1px solid #2e2e36',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    userSelect: 'none'
+  });
+
+  const headerLeft = document.createElement('div');
+  Object.assign(headerLeft.style, {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px'
+  });
+
+  const titleIcon = document.createElement('span');
+  titleIcon.textContent = meta.isFirstRun ? '🎉' : '✨';
+  titleIcon.style.fontSize = '16px';
+
+  const titleText = document.createElement('span');
+  titleText.style.fontWeight = '700';
+  titleText.style.fontSize = '14px';
+  titleText.style.color = '#fff';
+  titleText.textContent = meta.isFirstRun 
+    ? `Initialized (${roles.length} Roles)` 
+    : `New Companies (${roles.length})`;
+
+  const badge = document.createElement('span');
+  Object.assign(badge.style, {
+    backgroundColor: '#15803d',
+    color: '#86efac',
+    fontSize: '11px',
+    fontWeight: '700',
+    padding: '2px 8px',
+    borderRadius: '10px',
+    border: '1px solid #22c55e'
+  });
+  badge.textContent = `${roles.length} New`;
+
+  headerLeft.appendChild(titleIcon);
+  headerLeft.appendChild(titleText);
+  headerLeft.appendChild(badge);
+
+  const headerRight = document.createElement('div');
+  Object.assign(headerRight.style, {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px'
+  });
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className = 'ocs-panel-save-btn';
+  saveBtn.innerHTML = `💾 Save DB`;
+  Object.assign(saveBtn.style, {
+    backgroundColor: '#15803d',
+    color: '#ffffff',
+    border: '1px solid #22c55e',
+    borderRadius: '8px',
+    padding: '5px 12px',
+    fontSize: '12px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    transition: 'all 0.15s ease'
+  });
+  saveBtn.addEventListener('mouseenter', () => {
+    if (saveBtn.style.cursor !== 'wait') saveBtn.style.backgroundColor = '#16a34a';
+  });
+  saveBtn.addEventListener('mouseleave', () => {
+    if (saveBtn.style.cursor !== 'wait') saveBtn.style.backgroundColor = '#15803d';
+  });
+  saveBtn.addEventListener('click', () => {
+    triggerDatabaseSave();
+  });
+
+  const closeBtn = document.createElement('button');
+  closeBtn.innerHTML = '✕';
+  closeBtn.title = 'Close list';
+  Object.assign(closeBtn.style, {
+    backgroundColor: 'transparent',
+    border: 'none',
+    color: '#a1a1aa',
+    cursor: 'pointer',
+    padding: '4px 8px',
+    borderRadius: '6px',
+    fontSize: '14px',
+    fontWeight: 'bold',
+    transition: 'all 0.15s ease'
+  });
+  closeBtn.addEventListener('mouseenter', () => {
+    closeBtn.style.backgroundColor = '#2e2e38';
+    closeBtn.style.color = '#fff';
+  });
+  closeBtn.addEventListener('mouseleave', () => {
+    closeBtn.style.backgroundColor = 'transparent';
+    closeBtn.style.color = '#a1a1aa';
+  });
+  closeBtn.addEventListener('click', () => closeNewCompaniesPanel());
+
+  headerRight.appendChild(saveBtn);
+  headerRight.appendChild(closeBtn);
+
+  header.appendChild(headerLeft);
+  header.appendChild(headerRight);
+  panel.appendChild(header);
+
+  // Filter input if more than 3 roles
+  let filterInput = null;
+  if (roles.length > 3) {
+    const filterContainer = document.createElement('div');
+    Object.assign(filterContainer.style, {
+      padding: '8px 14px',
+      backgroundColor: '#161619',
+      borderBottom: '1px solid #25252d'
+    });
+    filterInput = document.createElement('input');
+    filterInput.type = 'text';
+    filterInput.placeholder = '🔍 Search company or role...';
+    Object.assign(filterInput.style, {
+      width: '100%',
+      padding: '6px 10px',
+      backgroundColor: '#1f1f24',
+      border: '1px solid #32323c',
+      borderRadius: '6px',
+      color: '#fff',
+      fontSize: '12px',
+      outline: 'none',
+      boxSizing: 'border-box'
+    });
+    filterContainer.appendChild(filterInput);
+    panel.appendChild(filterContainer);
+  }
+
+  // Scrollable container for cards
+  const listContainer = document.createElement('div');
+  listContainer.className = 'ocs-custom-scroll';
+  Object.assign(listContainer.style, {
+    flex: '1',
+    overflowY: 'auto',
+    padding: '10px 14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    maxHeight: '340px'
+  });
+
+  const createCardActionBtn = (label, title, onClick) => {
+    const btn = document.createElement('button');
+    btn.innerHTML = label;
+    btn.title = title;
+    Object.assign(btn.style, {
+      backgroundColor: '#24242b',
+      border: '1px solid #383842',
+      color: '#d4d4d8',
+      fontSize: '11px',
+      fontWeight: '600',
+      padding: '3px 7px',
+      borderRadius: '5px',
+      cursor: 'pointer',
+      transition: 'all 0.15s ease',
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: '3px'
+    });
+    btn.addEventListener('mouseenter', () => {
+      btn.style.backgroundColor = '#32323c';
+      btn.style.color = '#fff';
+      btn.style.borderColor = '#4f4f5a';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.backgroundColor = '#24242b';
+      btn.style.color = '#d4d4d8';
+      btn.style.borderColor = '#383842';
+    });
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onClick(btn);
+    });
+    return btn;
+  };
+
+  const renderRoleCard = (role) => {
+    const card = document.createElement('div');
+    card.className = 'ocs-new-company-card';
+    Object.assign(card.style, {
+      backgroundColor: '#18181c',
+      border: '1px solid #2d2d38',
+      borderRadius: '10px',
+      padding: '10px 12px',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '6px',
+      transition: 'all 0.15s ease'
+    });
+    card.addEventListener('mouseenter', () => {
+      card.style.borderColor = '#4f4f5e';
+      card.style.backgroundColor = '#1e1e24';
+    });
+    card.addEventListener('mouseleave', () => {
+      card.style.borderColor = '#2d2d38';
+      card.style.backgroundColor = '#18181c';
+    });
+
+    const topLine = document.createElement('div');
+    Object.assign(topLine.style, {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '8px',
+      flexWrap: 'wrap'
+    });
+
+    const companyInfo = document.createElement('div');
+    Object.assign(companyInfo.style, {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px'
+    });
+
+    const companyName = document.createElement('span');
+    companyName.style.fontWeight = '700';
+    companyName.style.fontSize = '14px';
+    companyName.style.color = '#ffffff';
+    companyName.textContent = role.company || 'Unknown Company';
+    companyInfo.appendChild(companyName);
+
+    if (role.ctc) {
+      const ctcBadge = document.createElement('span');
+      Object.assign(ctcBadge.style, {
+        backgroundColor: 'rgba(34, 197, 94, 0.15)',
+        color: '#4ade80',
+        border: '1px solid rgba(34, 197, 94, 0.3)',
+        fontSize: '11px',
+        fontWeight: '600',
+        padding: '1px 6px',
+        borderRadius: '5px'
+      });
+      ctcBadge.textContent = role.ctc;
+      companyInfo.appendChild(ctcBadge);
+    }
+
+    const actions = document.createElement('div');
+    Object.assign(actions.style, {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '4px'
+    });
+
+    const topBtn = createCardActionBtn('⭐ +Top', 'Add to Top Companies Notepad', (btn) => {
+      const res = addCompanyToNotepad(role.company, 'top');
+      if (res === 'added') {
+        btn.innerHTML = '✓ Added';
+        btn.style.backgroundColor = '#14532d';
+        btn.style.borderColor = '#22c55e';
+        btn.style.color = '#86efac';
+        setTimeout(() => {
+          btn.innerHTML = '⭐ +Top';
+          btn.style.backgroundColor = '#24242b';
+          btn.style.borderColor = '#383842';
+          btn.style.color = '#d4d4d8';
+        }, 1500);
+      } else {
+        showToastNotification(`"${role.company}" is already in your Top Notepad!`);
+      }
+    });
+
+    const decentBtn = createCardActionBtn('👍 +Decent', 'Add to Decent Companies Notepad', (btn) => {
+      const res = addCompanyToNotepad(role.company, 'decent');
+      if (res === 'added') {
+        btn.innerHTML = '✓ Added';
+        btn.style.backgroundColor = '#14532d';
+        btn.style.borderColor = '#22c55e';
+        btn.style.color = '#86efac';
+        setTimeout(() => {
+          btn.innerHTML = '👍 +Decent';
+          btn.style.backgroundColor = '#24242b';
+          btn.style.borderColor = '#383842';
+          btn.style.color = '#d4d4d8';
+        }, 1500);
+      } else {
+        showToastNotification(`"${role.company}" is already in your Decent Notepad!`);
+      }
+    });
+
+    const viewBtn = createCardActionBtn('🔍 View', 'Find and highlight in table', () => {
+      scrollToCompanyRow(role);
+    });
+
+    actions.appendChild(topBtn);
+    actions.appendChild(decentBtn);
+    actions.appendChild(viewBtn);
+
+    if (role.role_url) {
+      const linkBtn = createCardActionBtn('🔗 JD', 'Open job details link', () => {
+        window.open(role.role_url, '_blank');
+      });
+      actions.appendChild(linkBtn);
+    }
+
+    topLine.appendChild(companyInfo);
+    topLine.appendChild(actions);
+
+    const bottomLine = document.createElement('div');
+    Object.assign(bottomLine.style, {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '10px',
+      fontSize: '12px',
+      color: '#a1a1aa',
+      flexWrap: 'wrap'
+    });
+
+    const titleSpan = document.createElement('span');
+    titleSpan.style.color = '#93c5fd';
+    titleSpan.style.fontWeight = '500';
+    titleSpan.textContent = `💼 ${role.title || 'Role not specified'}`;
+    bottomLine.appendChild(titleSpan);
+
+    if (role.deadline) {
+      const deadlineSpan = document.createElement('span');
+      deadlineSpan.style.color = '#fbbf24';
+      deadlineSpan.style.fontSize = '11px';
+      deadlineSpan.textContent = `⏰ ${role.deadline}`;
+      bottomLine.appendChild(deadlineSpan);
+    }
+
+    if (role.eligibility) {
+      const eligSpan = document.createElement('span');
+      eligSpan.style.fontSize = '11px';
+      eligSpan.style.color = '#a1a1aa';
+      eligSpan.textContent = `📋 ${role.eligibility}`;
+      bottomLine.appendChild(eligSpan);
+    }
+
+    card.appendChild(topLine);
+    card.appendChild(bottomLine);
+    return card;
+  };
+
+  const updateListDisplay = (query = '') => {
+    listContainer.innerHTML = '';
+    const q = query.trim().toLowerCase();
+    const filtered = q
+      ? roles.filter(r => (r.company && r.company.toLowerCase().includes(q)) || (r.title && r.title.toLowerCase().includes(q)))
+      : roles;
+    if (filtered.length === 0) {
+      const emptyNotice = document.createElement('div');
+      emptyNotice.style.padding = '20px';
+      emptyNotice.style.textAlign = 'center';
+      emptyNotice.style.color = '#71717a';
+      emptyNotice.style.fontSize = '13px';
+      emptyNotice.textContent = `No companies match "${query}"`;
+      listContainer.appendChild(emptyNotice);
+    } else {
+      filtered.forEach(role => {
+        listContainer.appendChild(renderRoleCard(role));
+      });
+    }
+  };
+
+  updateListDisplay();
+
+  if (filterInput) {
+    filterInput.addEventListener('input', (e) => {
+      updateListDisplay(e.target.value);
+    });
+  }
+
+  panel.appendChild(listContainer);
+
+  // Footer
+  const footer = document.createElement('div');
+  Object.assign(footer.style, {
+    padding: '10px 16px',
+    backgroundColor: '#1b1b1f',
+    borderTop: '1px solid #2e2e36',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    fontSize: '12px',
+    color: '#a1a1aa'
+  });
+
+  const footerText = document.createElement('span');
+  footerText.textContent = `Showing ${roles.length} new ${roles.length === 1 ? 'company' : 'companies'}`;
+
+  const footerActions = document.createElement('div');
+  Object.assign(footerActions.style, {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px'
+  });
+
+  const footerSaveBtn = document.createElement('button');
+  footerSaveBtn.className = 'ocs-panel-save-btn';
+  footerSaveBtn.innerHTML = `💾 Save to Database`;
+  Object.assign(footerSaveBtn.style, {
+    backgroundColor: '#15803d',
+    color: '#ffffff',
+    border: '1px solid #22c55e',
+    borderRadius: '8px',
+    padding: '6px 14px',
+    fontSize: '12px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    transition: 'all 0.15s ease'
+  });
+  footerSaveBtn.addEventListener('mouseenter', () => {
+    if (footerSaveBtn.style.cursor !== 'wait') footerSaveBtn.style.backgroundColor = '#16a34a';
+  });
+  footerSaveBtn.addEventListener('mouseleave', () => {
+    if (footerSaveBtn.style.cursor !== 'wait') footerSaveBtn.style.backgroundColor = '#15803d';
+  });
+  footerSaveBtn.addEventListener('click', () => {
+    triggerDatabaseSave();
+  });
+
+  const dismissBtn = document.createElement('button');
+  dismissBtn.textContent = 'Dismiss';
+  Object.assign(dismissBtn.style, {
+    backgroundColor: '#27272a',
+    color: '#d4d4d8',
+    border: '1px solid #3f3f46',
+    borderRadius: '8px',
+    padding: '6px 12px',
+    fontSize: '12px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'all 0.15s ease'
+  });
+  dismissBtn.addEventListener('mouseenter', () => {
+    dismissBtn.style.backgroundColor = '#323238';
+    dismissBtn.style.color = '#fff';
+  });
+  dismissBtn.addEventListener('mouseleave', () => {
+    dismissBtn.style.backgroundColor = '#27272a';
+    dismissBtn.style.color = '#d4d4d8';
+  });
+  dismissBtn.addEventListener('click', () => closeNewCompaniesPanel());
+
+  footerActions.appendChild(dismissBtn);
+  footerActions.appendChild(footerSaveBtn);
+
+  footer.appendChild(footerText);
+  footer.appendChild(footerActions);
+  panel.appendChild(footer);
+
+  document.body.appendChild(panel);
+}
+
+function closeNewCompaniesPanel() {
+  const panel = document.getElementById('ocs-new-companies-panel');
+  if (panel) panel.remove();
+}
+
+function positionNewCompaniesPanel() {
+  const panel = document.getElementById('ocs-new-companies-panel');
+  const bar = document.getElementById('ocs-floating-bar');
+  if (!panel || !bar) return;
+
+  const barRect = bar.getBoundingClientRect();
+  const bottomOffset = window.innerHeight - barRect.top + 12;
+  panel.style.bottom = `${bottomOffset}px`;
+}
+
+function updatePanelSaveButtonState(state, errorMsg) {
+  const panel = document.getElementById('ocs-new-companies-panel');
+  if (!panel) return;
+
+  const saveBtns = panel.querySelectorAll('.ocs-panel-save-btn');
+  saveBtns.forEach(btn => {
+    if (state === 'saving') {
+      btn.innerHTML = `<span class="ocs-spinning">🔄</span> Saving...`;
+      btn.style.cursor = 'wait';
+      btn.disabled = true;
+    } else if (state === 'saved') {
+      btn.innerHTML = `✅ Saved to Database!`;
+      btn.style.backgroundColor = '#14532d';
+      btn.style.borderColor = '#22c55e';
+      btn.style.color = '#86efac';
+      btn.style.cursor = 'default';
+      btn.disabled = true;
+    } else if (state === 'error') {
+      btn.innerHTML = `⚠️ Save Failed`;
+      btn.style.backgroundColor = '#7f1d1d';
+      btn.style.borderColor = '#ef4444';
+      btn.style.color = '#fca5a5';
+      btn.style.cursor = 'pointer';
+      btn.disabled = false;
+      btn.title = errorMsg || 'Error saving';
+    } else {
+      btn.innerHTML = `💾 Save to Database`;
+      btn.style.backgroundColor = '#15803d';
+      btn.style.borderColor = '#22c55e';
+      btn.style.color = '#ffffff';
+      btn.style.cursor = 'pointer';
+      btn.disabled = false;
+    }
+  });
+}
+
+function showUpToDatePopup(totalFound) {
+  closeNewCompaniesPanel();
+  const oldPopup = document.getElementById('ocs-up-to-date-popup');
+  if (oldPopup) oldPopup.remove();
+
+  const bar = document.getElementById('ocs-floating-bar');
+  const barRect = bar ? bar.getBoundingClientRect() : null;
+  const bottomOffset = barRect ? (window.innerHeight - barRect.top + 12) : 84;
+
+  const popup = document.createElement('div');
+  popup.id = 'ocs-up-to-date-popup';
+  Object.assign(popup.style, {
+    position: 'fixed',
+    bottom: `${bottomOffset}px`,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '10px 18px',
+    backgroundColor: 'rgba(20, 20, 24, 0.95)',
+    backdropFilter: 'blur(16px)',
+    WebkitBackdropFilter: 'blur(16px)',
+    border: '1px solid rgba(34, 197, 94, 0.4)',
+    borderRadius: '24px',
+    color: '#f4f4f5',
+    boxShadow: '0 16px 36px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.08)',
+    zIndex: '100000',
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    fontSize: '13px',
+    fontWeight: '600',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    animation: 'ocs-panel-slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
+    whiteSpace: 'nowrap'
+  });
+
+  const checkIcon = document.createElement('span');
+  checkIcon.textContent = '✓';
+  checkIcon.style.color = '#4ade80';
+  checkIcon.style.fontSize = '15px';
+  checkIcon.style.fontWeight = 'bold';
+
+  const textSpan = document.createElement('span');
+  textSpan.textContent = totalFound 
+    ? `All ${totalFound} companies up to date — No new companies found`
+    : 'Portal is up to date — No new companies found';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕';
+  Object.assign(closeBtn.style, {
+    background: 'none',
+    border: 'none',
+    color: '#a1a1aa',
+    cursor: 'pointer',
+    padding: '2px 6px',
+    fontSize: '12px',
+    fontWeight: 'bold',
+    marginLeft: '6px'
+  });
+  closeBtn.addEventListener('click', () => popup.remove());
+
+  popup.appendChild(checkIcon);
+  popup.appendChild(textSpan);
+  popup.appendChild(closeBtn);
+  document.body.appendChild(popup);
+
+  setTimeout(() => {
+    if (popup.parentNode) {
+      popup.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+      popup.style.opacity = '0';
+      popup.style.transform = 'translateX(-50%) translateY(6px)';
+      setTimeout(() => popup.remove(), 300);
+    }
+  }, 4000);
+}
+
+function showScanErrorPopup(errorMsg) {
+  closeNewCompaniesPanel();
+  const oldPopup = document.getElementById('ocs-up-to-date-popup');
+  if (oldPopup) oldPopup.remove();
+
+  const bar = document.getElementById('ocs-floating-bar');
+  const barRect = bar ? bar.getBoundingClientRect() : null;
+  const bottomOffset = barRect ? (window.innerHeight - barRect.top + 12) : 84;
+
+  const popup = document.createElement('div');
+  popup.id = 'ocs-up-to-date-popup';
+  Object.assign(popup.style, {
+    position: 'fixed',
+    bottom: `${bottomOffset}px`,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    padding: '10px 18px',
+    backgroundColor: 'rgba(28, 15, 15, 0.95)',
+    backdropFilter: 'blur(16px)',
+    WebkitBackdropFilter: 'blur(16px)',
+    border: '1px solid rgba(239, 68, 68, 0.4)',
+    borderRadius: '24px',
+    color: '#fecaca',
+    boxShadow: '0 16px 36px rgba(0, 0, 0, 0.55)',
+    zIndex: '100000',
+    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+    fontSize: '13px',
+    fontWeight: '600',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    animation: 'ocs-panel-slide-up 0.25s cubic-bezier(0.16, 1, 0.3, 1)'
+  });
+
+  const icon = document.createElement('span');
+  icon.textContent = '⚠️';
+
+  const textSpan = document.createElement('span');
+  textSpan.textContent = errorMsg ? `Scan Failed: ${errorMsg}` : 'Scan Failed. Please try again.';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.textContent = '✕';
+  Object.assign(closeBtn.style, {
+    background: 'none',
+    border: 'none',
+    color: '#f87171',
+    cursor: 'pointer',
+    padding: '2px 6px',
+    fontSize: '12px',
+    fontWeight: 'bold',
+    marginLeft: '6px'
+  });
+  closeBtn.addEventListener('click', () => popup.remove());
+
+  popup.appendChild(icon);
+  popup.appendChild(textSpan);
+  popup.appendChild(closeBtn);
+  document.body.appendChild(popup);
+
+  setTimeout(() => {
+    if (popup.parentNode) {
+      popup.style.transition = 'opacity 0.3s ease';
+      popup.style.opacity = '0';
+      setTimeout(() => popup.remove(), 300);
+    }
+  }, 5000);
+}
+
+// Close new companies panel when clicking outside
+document.addEventListener('mousedown', (e) => {
+  const panel = document.getElementById('ocs-new-companies-panel');
+  const bar = document.getElementById('ocs-floating-bar');
+  if (!panel) return;
+  if (panel.contains(e.target) || (bar && bar.contains(e.target))) return;
+  const notepad = document.getElementById('ocs-notepad-panel');
+  if (notepad && notepad.contains(e.target)) return;
+  closeNewCompaniesPanel();
+});
+
+window.addEventListener('resize', positionNewCompaniesPanel, { passive: true });
 
 // Backward compatibility
 function injectFloatingToggle() {
@@ -386,29 +1407,15 @@ function injectFloatingActionUI() {
 
   scanBtn.addEventListener('click', () => {
     if (scanState === 'NEEDS_SAVE') {
-      scanState = 'SAVING';
-      renderScanButtonState(scanBtn);
-      chrome.runtime.sendMessage({ action: 'UPDATE_DATABASE' }, (response) => {
-        if (chrome.runtime.lastError || (response && response.status === 'error')) {
-          scanState = 'ERROR';
-          scanBtn.title = 'Error saving database: ' + (chrome.runtime.lastError ? chrome.runtime.lastError.message : response?.error);
-          renderScanButtonState(scanBtn);
-          clearTimeout(scanRevertTimer);
-          scanRevertTimer = setTimeout(() => {
-            scanState = 'IDLE';
-            renderScanButtonState();
-          }, 3500);
-        } else {
-          scanState = 'SAVED';
-          renderScanButtonState(scanBtn);
-          updatePortalTotalCount();
-          clearTimeout(scanRevertTimer);
-          scanRevertTimer = setTimeout(() => {
-            scanState = 'IDLE';
-            renderScanButtonState();
-          }, 2500);
-        }
-      });
+      const panel = document.getElementById('ocs-new-companies-panel');
+      if (!panel && lastScannedRolesList && lastScannedRolesList.length > 0) {
+        showNewCompaniesPanel(lastScannedRolesList, {
+          newRolesCount: lastScanNewCount,
+          totalFound: totalCompaniesCount,
+          isFirstRun: false
+        });
+      }
+      triggerDatabaseSave();
       return;
     }
 
@@ -417,6 +1424,7 @@ function injectFloatingActionUI() {
     isScanning = true;
     scanState = 'SCANNING';
     renderScanButtonState(scanBtn);
+    closeNewCompaniesPanel();
 
     chrome.runtime.sendMessage({ action: 'START_SCAN' }, (response) => {
       if (chrome.runtime.lastError) {
@@ -424,6 +1432,7 @@ function injectFloatingActionUI() {
         scanState = 'ERROR';
         scanBtn.title = 'Error starting scan: ' + chrome.runtime.lastError.message;
         renderScanButtonState(scanBtn);
+        showScanErrorPopup(chrome.runtime.lastError.message);
         clearTimeout(scanRevertTimer);
         scanRevertTimer = setTimeout(() => {
           scanState = 'IDLE';
@@ -503,7 +1512,7 @@ function injectFloatingActionUI() {
     toggleBtn.innerHTML = showHiddenRoles ? '🙈 Hide Hidden' : '👁️ Show Hidden';
     toggleBtn.style.backgroundColor = showHiddenRoles ? '#28a745' : '#18181b';
     toggleBtn.style.borderColor = showHiddenRoles ? '#34d399' : '#33333d';
-    document.querySelectorAll('.MuiDataGrid-row, [role="row"]').forEach(processRow);
+    processAllVisibleRows();
   });
 
   // 5. Subtle Vertical Divider
@@ -580,6 +1589,8 @@ function injectFloatingActionUI() {
     '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>',
     () => {
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      const mainContainer = document.getElementById('student-main') || document.querySelector('main');
+      if (mainContainer) mainContainer.scrollTo({ top: 0, behavior: 'smooth' });
       const scroller = document.querySelector('.MuiDataGrid-virtualScroller');
       if (scroller) scroller.scrollTo({ top: 0, behavior: 'smooth' });
     }
@@ -593,6 +1604,8 @@ function injectFloatingActionUI() {
     () => {
       const maxScroll = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
       window.scrollTo({ top: maxScroll, behavior: 'smooth' });
+      const mainContainer = document.getElementById('student-main') || document.querySelector('main');
+      if (mainContainer) mainContainer.scrollTo({ top: mainContainer.scrollHeight, behavior: 'smooth' });
       const scroller = document.querySelector('.MuiDataGrid-virtualScroller');
       if (scroller) scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
     }
@@ -659,9 +1672,11 @@ function triggerTablePagination(direction) {
 
   btn.click();
   setTimeout(() => {
+    expandDataGridToFull();
     updatePortalTotalCount();
     updateNavButtonsState();
-  }, 250);
+    processAllVisibleRows();
+  }, 350);
 }
 
 function updateNavButtonsState() {
@@ -688,6 +1703,21 @@ function updateNavButtonsState() {
 
 // Helpers for Detecting and Updating Total Companies on Portal
 function detectTotalCompaniesCount() {
+  // Strategy 0: Direct MUI DataGrid aria-rowcount attribute (e.g. aria-rowcount="247" on .MuiDataGrid-root)
+  const grid = document.querySelector('.MuiDataGrid-root, [role="grid"]');
+  if (grid) {
+    const rawAttr = grid.getAttribute('aria-rowcount');
+    if (rawAttr) {
+      const parsed = parseInt(rawAttr, 10);
+      if (!isNaN(parsed) && parsed > 0) {
+        // aria-rowcount includes the header row, so data rows = aria-rowcount - 1
+        const hasHeader = grid.querySelector('.MuiDataGrid-columnHeaders, .MuiDataGrid-columnHeader, [role="columnheader"]') !== null;
+        const total = (hasHeader && parsed > 1) ? parsed - 1 : parsed;
+        return total;
+      }
+    }
+  }
+
   // Strategy 1: Standard MUI TablePagination displayed rows element (e.g. "1–50 of 138")
   const displayedRowsEl = document.querySelector('.MuiTablePagination-displayedRows');
   if (displayedRowsEl && displayedRowsEl.textContent) {
@@ -767,13 +1797,19 @@ function observePagination() {
   if (paginationObserver) paginationObserver.disconnect();
   const target = document.querySelector('.MuiTablePagination-root') || 
                  document.querySelector('.MuiDataGrid-footerContainer') ||
-                 document.querySelector('.MuiDataGrid-root');
+                 document.querySelector('.MuiDataGrid-root, [role="grid"]');
   if (target) {
     paginationObserver = new MutationObserver(() => {
       updatePortalTotalCount();
       updateNavButtonsState();
     });
-    paginationObserver.observe(target, { childList: true, subtree: true, characterData: true });
+    paginationObserver.observe(target, { 
+      childList: true, 
+      subtree: true, 
+      characterData: true, 
+      attributes: true, 
+      attributeFilter: ['aria-rowcount', 'aria-colcount', 'disabled', 'aria-disabled'] 
+    });
   }
 }
 
@@ -1783,56 +2819,250 @@ function setupNotepadResize(panel) {
   createHandle('e', 'ew-resize', { right: '0', top: '24px', bottom: '20px', width: '6px' });
 }
 
-function startObserving(scroller) {
-  if (observer) observer.disconnect();
-  observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      if (mutation.type === 'childList') {
-        mutation.addedNodes.forEach((node) => {
-          if (node.nodeType === 1 && (node.getAttribute('role') === 'row' || node.classList.contains('MuiDataGrid-row'))) {
-            processRow(node);
-          } else if (node.nodeType === 1) {
-            const rows = node.querySelectorAll('.MuiDataGrid-row, [role="row"]');
-            rows.forEach(processRow);
-          }
-        });
-      }
+let scrollThrottleTimer = null;
+function handleVirtualScroll() {
+  if (scrollThrottleTimer) return;
+  scrollThrottleTimer = requestAnimationFrame(() => {
+    scrollThrottleTimer = null;
+    processAllVisibleRows();
+  });
+}
+
+let isProcessingRows = false;
+function processAllVisibleRows() {
+  if (isProcessingRows) return;
+  isProcessingRows = true;
+  try {
+    const rows = document.querySelectorAll('.MuiDataGrid-row:not(.MuiDataGrid-columnHeaders)');
+    rows.forEach(processRow);
+  } finally {
+    isProcessingRows = false;
+  }
+}
+
+let activeScrollTargets = new WeakSet();
+function attachScrollListeners() {
+  const targets = [
+    window,
+    document,
+    document.getElementById('student-main'),
+    document.querySelector('.MuiDataGrid-virtualScroller'),
+    document.querySelector('.MuiDataGrid-root')
+  ].filter(Boolean);
+
+  targets.forEach(target => {
+    if (!activeScrollTargets.has(target)) {
+      target.addEventListener('scroll', handleVirtualScroll, { passive: true });
+      activeScrollTargets.add(target);
     }
   });
-  observer.observe(scroller, { childList: true, subtree: true });
+}
+
+function startObserving(scroller) {
+  if (observer) observer.disconnect();
+  
+  attachScrollListeners();
+
+  observer = new MutationObserver((mutations) => {
+    if (isProcessingRows) return;
+    let shouldReprocess = false;
+    for (const mutation of mutations) {
+      if (mutation.type === 'childList') {
+        for (let i = 0; i < mutation.addedNodes.length; i++) {
+          const node = mutation.addedNodes[i];
+          if (node.nodeType === 1 && (node.classList?.contains('MuiDataGrid-row') || node.querySelector?.('.MuiDataGrid-row'))) {
+            shouldReprocess = true;
+            break;
+          }
+        }
+        if (shouldReprocess) break;
+      }
+    }
+    if (shouldReprocess) {
+      expandDataGridToFull();
+      handleVirtualScroll();
+    }
+  });
+
+  const rootOrScroller = document.querySelector('.MuiDataGrid-virtualScrollerRenderZone') || 
+                         document.querySelector('.MuiDataGrid-virtualScroller') || 
+                         document.querySelector('.MuiDataGrid-root, [role="grid"]') || 
+                         scroller;
+
+  if (rootOrScroller) {
+    observer.observe(rootOrScroller, {
+      childList: true,
+      subtree: true
+    });
+  }
+}
+
+function getRowCompany(row) {
+  if (!row) return '';
+  const cell = row.querySelector('[data-field="company" i], [data-field="company_name" i], [data-field="organization" i], [data-field="employer" i]');
+  if (cell) {
+    const cellTitle = cell.getAttribute('title');
+    if (cellTitle && cellTitle.trim()) return cleanText(cellTitle).toLowerCase();
+
+    const content = cell.querySelector('.MuiDataGrid-cellContent');
+    if (content) {
+      const contentTitle = content.getAttribute('title');
+      if (contentTitle && contentTitle.trim()) return cleanText(contentTitle).toLowerCase();
+      const txt = cleanText(content.textContent).toLowerCase();
+      if (txt) return txt;
+    }
+
+    const clone = cell.cloneNode(true);
+    clone.querySelectorAll('.ocs-action-btn, .ocs-note-container, button, input').forEach(el => el.remove());
+    return cleanText(clone.textContent).toLowerCase();
+  }
+  const firstCell = row.querySelector('.MuiDataGrid-cell');
+  if (firstCell) {
+    const clone = firstCell.cloneNode(true);
+    clone.querySelectorAll('.ocs-action-btn, .ocs-note-container, button, input').forEach(el => el.remove());
+    return cleanText(clone.textContent).toLowerCase();
+  }
+  return '';
+}
+
+function getRowTitle(row) {
+  if (!row) return '';
+  const cell = row.querySelector('[data-field="title" i], [data-field="role" i], [data-field="designation" i], [data-field="profile" i], [data-field="job_title" i]');
+  if (cell) {
+    const cellTitle = cell.getAttribute('title');
+    if (cellTitle && cellTitle.trim()) return cleanText(cellTitle).toLowerCase();
+
+    const content = cell.querySelector('.MuiDataGrid-cellContent');
+    if (content) {
+      const contentTitle = content.getAttribute('title');
+      if (contentTitle && contentTitle.trim()) return cleanText(contentTitle).toLowerCase();
+      const txt = cleanText(content.textContent).toLowerCase();
+      if (txt) return txt;
+    }
+
+    const clone = cell.cloneNode(true);
+    clone.querySelectorAll('.ocs-note-container, .ocs-action-btn, button, input').forEach(el => el.remove());
+    return cleanText(clone.textContent).toLowerCase();
+  }
+  const cells = row.querySelectorAll('.MuiDataGrid-cell');
+  if (cells && cells.length > 1) {
+    const clone = cells[1].cloneNode(true);
+    clone.querySelectorAll('.ocs-note-container, .ocs-action-btn, button, input').forEach(el => el.remove());
+    return cleanText(clone.textContent).toLowerCase();
+  }
+  return '';
+}
+
+function getRowIdentifier(row) {
+  if (!row) return null;
+  const company = getRowCompany(row);
+  const title = getRowTitle(row);
+  const dataId = row.getAttribute('data-id') || row.getAttribute('data-rowindex') || row.getAttribute('id');
+  if (company && title) {
+    return `${company}|${title}`;
+  }
+  if (company) {
+    return `${company}|${dataId || '0'}`;
+  }
+  return dataId || null;
+}
+
+function isRowHidden(row) {
+  if (!hiddenRoles || hiddenRoles.length === 0) return false;
+
+  const company = getRowCompany(row);
+  const title = getRowTitle(row);
+  const dataId = row.getAttribute('data-id');
+
+  if (!company && !title && !dataId) return false;
+
+  return hiddenRoles.some(r => {
+    const rComp = cleanText(r.company || '').toLowerCase();
+    const rTitle = cleanText(r.title || '').toLowerCase();
+
+    // 1. Primary: exact or prefix match by company AND role title
+    if (rComp && company) {
+      const compMatches = (rComp === company) || 
+        (rComp.length > 4 && (company.startsWith(rComp.replace(/\.+$/, '')) || rComp.startsWith(company.replace(/\.+$/, ''))));
+      if (compMatches) {
+        // If both have titles, require the title to match!
+        if (rTitle && title && rTitle !== 'unknown' && title !== 'unknown') {
+          return (rTitle === title) || 
+            (rTitle.length > 4 && (title.startsWith(rTitle.replace(/\.+$/, '')) || rTitle.startsWith(title.replace(/\.+$/, ''))));
+        }
+
+        // If one is missing a title, match by dataId
+        if (dataId && r.posting_id && String(r.posting_id) === String(dataId)) {
+          return true;
+        }
+
+        // Never hide different roles of the same company!
+        return false;
+      }
+    }
+
+    // 2. Fallback: only if posting_id is a unique alphanumeric ID (NEVER a small numeric row index like "0", "1")
+    if (dataId && r.posting_id && String(r.posting_id) === String(dataId)) {
+      if (!/^\d{1,2}$/.test(String(dataId))) {
+        return true;
+      }
+    }
+    return false;
+  });
 }
 
 function processRow(row) {
-  const dataId = row.getAttribute('data-id');
-  if (!dataId) return;
+  // CRITICAL: Skip header row or non-data rows
+  if (!row || !row.classList || !row.classList.contains('MuiDataGrid-row')) return;
+  if (row.classList.contains('MuiDataGrid-columnHeaders') || row.closest('.MuiDataGrid-columnHeaders')) return;
 
-  const isHidden = hiddenRoles.some(r => r.posting_id === dataId);
+  const comp = getRowCompany(row);
+  const ttl = getRowTitle(row);
+  const dataId = row.getAttribute('data-id') || `${comp}|${ttl}`;
+  if (!comp && !ttl && !row.getAttribute('data-id')) return;
+
+  const isHidden = isRowHidden(row);
+  const noteKey = (comp && ttl) ? `${comp}|${ttl}` : (comp || dataId);
+  const noteText = roleNotes[noteKey] || (dataId ? roleNotes[dataId] : '') || '';
+
+  // Idempotency state guard: abort if row is already in the expected visual state
+  const stateKey = `${dataId}::${comp}::${ttl}::${isHidden}::${showHiddenRoles}::${noteText}`;
+  if (row.dataset.ocsStateKey === stateKey) {
+    return;
+  }
+  row.dataset.ocsStateKey = stateKey;
 
   // Manage visibility & Hide/Unhide Buttons
   if (isHidden) {
     if (showHiddenRoles) {
+      row.classList.remove('ocs-row-hidden');
+      row.classList.add('ocs-row-dimmed');
+      row.style.removeProperty('display');
       row.style.opacity = '0.35';
       row.style.filter = 'grayscale(100%)';
-      row.style.removeProperty('display');
-      injectActionButtons(row, dataId, true);
+      injectActionButtons(row, true);
     } else {
+      row.classList.remove('ocs-row-dimmed');
+      row.classList.add('ocs-row-hidden');
       row.style.setProperty('display', 'none', 'important');
     }
   } else {
+    row.classList.remove('ocs-row-hidden', 'ocs-row-dimmed');
+    row.style.removeProperty('display');
     row.style.opacity = '1';
     row.style.filter = 'none';
-    row.style.removeProperty('display');
-    injectActionButtons(row, dataId, false);
+    injectActionButtons(row, false);
   }
 
   // Inject Features
-  injectNote(row, dataId);
+  injectNote(row);
   highlightDeadlineAndApplied(row);
 }
 
 // 2. Action Buttons (Hide/Unhide)
-function injectActionButtons(row, dataId, isHiddenMode) {
-  const companyCell = row.querySelector('[data-field="company"]');
+function injectActionButtons(row, isHiddenMode) {
+  const companyCell = row.querySelector('[data-field="company" i], [data-field="company_name" i], [data-field="organization" i], [data-field="employer" i]') ||
+                      row.querySelector('.MuiDataGrid-cell');
   if (!companyCell) return;
 
   let actionBtn = companyCell.querySelector('.ocs-action-btn');
@@ -1845,60 +3075,109 @@ function injectActionButtons(row, dataId, isHiddenMode) {
     companyCell.style.justifyContent = 'space-between';
     companyCell.appendChild(actionBtn);
 
-    // Fade effect for hide button
-    row.addEventListener('mouseenter', () => { if(!isHiddenMode) actionBtn.style.opacity = '1'; });
-    row.addEventListener('mouseleave', () => { if(!isHiddenMode) actionBtn.style.opacity = '0.2'; });
+    actionBtn.addEventListener('mouseenter', () => {
+      if (actionBtn.dataset.mode === 'hide') actionBtn.style.opacity = '1';
+    });
+    actionBtn.addEventListener('mouseleave', () => {
+      if (actionBtn.dataset.mode === 'hide') actionBtn.style.opacity = '0.2';
+    });
   }
 
-  // Remove old listeners by cloning
-  const newBtn = actionBtn.cloneNode(true);
-  actionBtn.parentNode.replaceChild(newBtn, actionBtn);
-  actionBtn = newBtn;
-
-  // Apply state (Unhide vs Hide)
-  if (isHiddenMode) {
-    actionBtn.textContent = 'Unhide';
-    Object.assign(actionBtn.style, {
-      marginLeft: 'auto', padding: '4px 10px', fontSize: '11px', cursor: 'pointer',
-      backgroundColor: '#28a745', color: '#fff', border: 'none', borderRadius: '4px',
-      fontWeight: 'bold', opacity: '1', zIndex: '10', transition: 'none', pointerEvents: 'auto'
-    });
-    // Use mousedown to prevent React cell focus rerender
-    actionBtn.addEventListener('mousedown', (e) => {
-      e.stopPropagation(); e.preventDefault();
-      hiddenRoles = hiddenRoles.filter(r => r.posting_id !== dataId);
-      chrome.storage.local.set({ hiddenRoles });
-    });
-  } else {
-    actionBtn.textContent = 'Hide';
-    Object.assign(actionBtn.style, {
-      marginLeft: 'auto', padding: '2px 8px', fontSize: '11px', cursor: 'pointer',
-      backgroundColor: '#333', color: '#fff', border: 'none', borderRadius: '4px',
-      fontWeight: '600', opacity: '0.2', transition: 'opacity 0.2s', zIndex: '10', pointerEvents: 'auto'
-    });
-    // Use mousedown to prevent React cell focus rerender
-    actionBtn.addEventListener('mousedown', (e) => {
-      e.stopPropagation(); e.preventDefault();
-      hideRole(row, dataId);
-    });
+  const desiredMode = isHiddenMode ? 'unhide' : 'hide';
+  if (actionBtn.dataset.mode !== desiredMode) {
+    actionBtn.dataset.mode = desiredMode;
+    if (isHiddenMode) {
+      actionBtn.textContent = 'Unhide';
+      Object.assign(actionBtn.style, {
+        marginLeft: 'auto', padding: '4px 10px', fontSize: '11px', cursor: 'pointer',
+        backgroundColor: '#28a745', color: '#fff', border: 'none', borderRadius: '4px',
+        fontWeight: 'bold', opacity: '1', zIndex: '10', transition: 'none', pointerEvents: 'auto'
+      });
+      actionBtn.onmousedown = (e) => {
+        e.stopPropagation(); e.preventDefault();
+        unhideRole(row);
+      };
+    } else {
+      actionBtn.textContent = 'Hide';
+      Object.assign(actionBtn.style, {
+        marginLeft: 'auto', padding: '2px 8px', fontSize: '11px', cursor: 'pointer',
+        backgroundColor: '#333', color: '#fff', border: 'none', borderRadius: '4px',
+        fontWeight: '600', opacity: '0.2', transition: 'opacity 0.2s', zIndex: '10', pointerEvents: 'auto'
+      });
+      actionBtn.onmousedown = (e) => {
+        e.stopPropagation(); e.preventDefault();
+        hideRole(row);
+      };
+    }
   }
 }
 
-function hideRole(row, dataId) {
-  const clone = row.cloneNode(true);
-  clone.querySelectorAll('.ocs-action-btn').forEach(btn => btn.remove());
-  const company = clone.querySelector('[data-field="company"]')?.textContent?.trim() || 'Unknown';
-  const title = clone.querySelector('[data-field="title"]')?.textContent?.trim() || 'Unknown';
-  
-  hiddenRoles.push({ posting_id: dataId, company, title, hiddenAt: Date.now() });
+function unhideRole(row) {
+  const comp = getRowCompany(row);
+  const ttl = getRowTitle(row);
+  const dataId = row.getAttribute('data-id');
+
+  hiddenRoles = hiddenRoles.filter(r => {
+    const rComp = cleanText(r.company || '').toLowerCase();
+    const rTitle = cleanText(r.title || '').toLowerCase();
+    
+    if (comp && rComp) {
+      const compMatches = (rComp === comp) || (rComp.length > 4 && (comp.startsWith(rComp.replace(/\.+$/, '')) || rComp.startsWith(comp.replace(/\.+$/, ''))));
+      if (compMatches) {
+        if (ttl && rTitle && rTitle !== 'unknown') {
+          const ttlMatches = (rTitle === ttl) || (rTitle.length > 4 && (ttl.startsWith(rTitle.replace(/\.+$/, '')) || rTitle.startsWith(ttl.replace(/\.+$/, ''))));
+          if (ttlMatches) {
+            return false; // Remove this specific role only
+          }
+          return true; // Keep other roles of the same company
+        }
+        if (dataId && r.posting_id && String(r.posting_id) === String(dataId)) {
+          return false;
+        }
+        return true;
+      }
+    }
+    if (dataId && r.posting_id && String(r.posting_id) === String(dataId)) {
+      return false;
+    }
+    return true;
+  });
+
+  delete row.dataset.ocsStateKey;
   chrome.storage.local.set({ hiddenRoles }, () => {
-    if (!showHiddenRoles) row.style.setProperty('display', 'none', 'important');
+    processRow(row);
+  });
+}
+
+function hideRole(row) {
+  const comp = getRowCompany(row);
+  const ttl = getRowTitle(row);
+  const dataId = row.getAttribute('data-id') || `${comp}|${ttl}`;
+  
+  hiddenRoles.push({
+    posting_id: dataId,
+    company: comp || 'Unknown',
+    title: ttl || 'Unknown',
+    hiddenAt: Date.now()
+  });
+
+  delete row.dataset.ocsStateKey;
+  chrome.storage.local.set({ hiddenRoles }, () => {
+    processRow(row);
   });
 }
 
 // 3. Custom Tags & Notes
-function injectNote(row, dataId) {
-  const titleCell = row.querySelector('[data-field="title"]');
+function injectNote(row) {
+  const comp = getRowCompany(row);
+  const ttl = getRowTitle(row);
+  const dataId = row.getAttribute('data-id');
+  const noteKey = (comp && ttl) ? `${comp}|${ttl}` : (comp || dataId);
+  if (!noteKey) return;
+
+  const cells = row.querySelectorAll('.MuiDataGrid-cell');
+  const titleCell = row.querySelector('[data-field="title" i], [data-field="role" i], [data-field="designation" i], [data-field="profile" i], [data-field="job_title" i]') ||
+                    (cells.length > 1 ? cells[1] : null);
   if (!titleCell) return;
 
   // Don't interrupt if the user is currently typing a note in this cell
@@ -1917,139 +3196,158 @@ function injectNote(row, dataId) {
     titleCell.appendChild(noteContainer);
   }
 
-  // Clear existing badge to re-render
-  noteContainer.innerHTML = '';
+  const text = roleNotes[noteKey] || (dataId ? roleNotes[dataId] : null) || '';
 
-  const text = roleNotes[dataId];
-  const badge = document.createElement('span');
-  Object.assign(badge.style, {
-    padding: '2px 6px', fontSize: '10px', borderRadius: '12px',
-    cursor: 'pointer', fontWeight: 'bold', whiteSpace: 'nowrap',
-    transition: 'all 0.2s ease', display: 'inline-block',
-    pointerEvents: 'auto', zIndex: '10'
-  });
+  if (noteContainer.dataset.renderedNote !== text) {
+    noteContainer.dataset.renderedNote = text;
+    noteContainer.innerHTML = '';
 
-  if (text) {
-    badge.textContent = text;
-    badge.style.backgroundColor = '#ffd700'; // Gold badge
-    badge.style.color = '#000';
-    badge.style.border = 'none';
-  } else {
-    badge.textContent = '+ Note';
-    badge.style.backgroundColor = 'transparent';
-    badge.style.color = '#999';
-    badge.style.border = '1px dashed #ccc';
-  }
-
-  // USE mousedown instead of click to beat React's focus rerender
-  badge.addEventListener('mousedown', (e) => {
-    e.stopPropagation();
-    e.preventDefault();
-
-    // Turn into an inline input box
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'ocs-note-input';
-    input.value = text || '';
-    input.placeholder = 'Type & press Enter...';
-    Object.assign(input.style, {
-      padding: '2px 6px', fontSize: '10px', borderRadius: '4px',
-      border: '1px solid #666', outline: 'none', width: '130px',
-      backgroundColor: '#fff', color: '#000', cursor: 'text',
+    const badge = document.createElement('span');
+    badge.className = 'ocs-note-badge';
+    Object.assign(badge.style, {
+      padding: '2px 6px', fontSize: '10px', borderRadius: '12px',
+      cursor: 'pointer', fontWeight: 'bold', whiteSpace: 'nowrap',
+      transition: 'all 0.2s ease', display: 'inline-block',
       pointerEvents: 'auto', zIndex: '10'
     });
 
-    // Prevent DataGrid from catching keypresses (e.g. spacebar, enter)
-    input.addEventListener('keydown', (e) => {
+    if (text) {
+      badge.textContent = text;
+      badge.style.backgroundColor = '#ffd700'; // Gold badge
+      badge.style.color = '#000';
+      badge.style.border = 'none';
+      badge.title = `Note: ${text} (Click to edit)`;
+    } else {
+      badge.textContent = '+ Note';
+      badge.style.backgroundColor = 'transparent';
+      badge.style.color = '#999';
+      badge.style.border = '1px dashed #ccc';
+      badge.title = 'Add note';
+    }
+
+    badge.onmousedown = (e) => {
       e.stopPropagation();
-      if (e.key === 'Enter') {
-        saveNote();
-      } else if (e.key === 'Escape') {
-        processRow(row); // Abort and revert to badge
-      }
-    });
+      e.preventDefault();
 
-    // Prevent click/mousedown from expanding row and losing focus
-    input.addEventListener('mousedown', (e) => e.stopPropagation());
-    input.addEventListener('click', (e) => e.stopPropagation());
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.className = 'ocs-note-input';
+      input.value = text || '';
+      input.placeholder = 'Type & press Enter...';
+      Object.assign(input.style, {
+        padding: '2px 6px', fontSize: '10px', borderRadius: '4px',
+        border: '1px solid #666', outline: 'none', width: '130px',
+        backgroundColor: '#fff', color: '#000', cursor: 'text',
+        pointerEvents: 'auto', zIndex: '10'
+      });
 
-    const saveNote = () => {
-      const newNote = input.value.trim();
-      if (newNote === '') {
-        delete roleNotes[dataId];
-      } else {
-        roleNotes[dataId] = newNote;
-      }
-      chrome.storage.local.set({ roleNotes });
-      // The storage listener will trigger processRow to re-render it as a badge
+      input.addEventListener('keydown', (ke) => {
+        ke.stopPropagation();
+        if (ke.key === 'Enter') {
+          saveNote();
+        } else if (ke.key === 'Escape') {
+          delete row.dataset.ocsStateKey;
+          delete noteContainer.dataset.renderedNote;
+          processRow(row);
+        }
+      });
+
+      input.addEventListener('mousedown', (me) => me.stopPropagation());
+      input.addEventListener('click', (ce) => ce.stopPropagation());
+
+      const saveNote = () => {
+        const newNote = input.value.trim();
+        if (newNote === '') {
+          delete roleNotes[noteKey];
+          if (dataId) delete roleNotes[dataId];
+        } else {
+          roleNotes[noteKey] = newNote;
+        }
+        delete row.dataset.ocsStateKey;
+        delete noteContainer.dataset.renderedNote;
+        chrome.storage.local.set({ roleNotes }, () => {
+          processRow(row);
+        });
+      };
+
+      input.addEventListener('blur', saveNote);
+
+      noteContainer.innerHTML = '';
+      noteContainer.appendChild(input);
+      input.focus();
     };
 
-    // Save when clicking outside
-    input.addEventListener('blur', saveNote);
-
-    noteContainer.innerHTML = '';
-    noteContainer.appendChild(input);
-    input.focus();
-  });
-
-  noteContainer.appendChild(badge);
+    noteContainer.appendChild(badge);
+  }
 }
 
 // 4. Deadline & Applied Status Highlighting
 function highlightDeadlineAndApplied(row) {
-  let appliedCell = row.querySelector('[data-field="applied"]') || row.querySelector('[data-field="registered"]');
-  const deadlineCell = row.querySelector('[data-field="deadline"]');
+  let appliedCell = row.querySelector('[data-field="applied" i], [data-field="registered" i], [data-field="status" i]');
+  let deadlineCell = row.querySelector('[data-field="deadline" i], [data-field="last_date" i]');
 
-  // Fallback to find Applied cell by content if data-field is weird
+  // Fallback to find cells by content if data-field is not matched
+  const cells = Array.from(row.querySelectorAll('.MuiDataGrid-cell'));
   if (!appliedCell) {
-    const cells = Array.from(row.querySelectorAll('.MuiDataGrid-cell'));
     appliedCell = cells.find(c => {
       const txt = c.textContent.trim().toUpperCase();
-      return txt === 'YES' || txt === 'NO';
+      return txt === 'YES' || txt === 'NO' || txt === 'APPLIED' || txt === 'REGISTERED';
     });
   }
 
-  if (!appliedCell || !deadlineCell) return;
+  if (!deadlineCell) {
+    deadlineCell = cells.find(c => {
+      const txt = c.textContent.trim();
+      return /\b\d{1,2}\s+[A-Za-z]{3}\s+\d{4}\b/.test(txt) || /\d{4}-\d{2}-\d{2}/.test(txt);
+    });
+  }
 
-  const appliedText = appliedCell.textContent.trim().toUpperCase();
-  const isApplied = appliedText === 'YES';
-  
-  // Create a nice badge look inside the cell
-  const contentNode = appliedCell.querySelector('.MuiDataGrid-cellContent') || appliedCell;
-  contentNode.style.padding = '4px 12px';
-  contentNode.style.borderRadius = '16px';
-  contentNode.style.fontWeight = 'bold';
-  contentNode.style.display = 'inline-block';
-  contentNode.style.textAlign = 'center';
-  
-  if (isApplied) {
-    // Already Applied -> Nice Green
-    contentNode.style.backgroundColor = '#d4edda';
-    contentNode.style.color = '#155724';
-  } else {
-    // Not Applied -> Check Deadline
+  // 1. Highlight applied status independently
+  if (appliedCell) {
+    const appliedText = appliedCell.textContent.trim().toUpperCase();
+    const isApplied = appliedText === 'YES' || appliedText === 'APPLIED' || appliedText === 'REGISTERED';
+    const contentNode = appliedCell.querySelector('.MuiDataGrid-cellContent') || appliedCell;
+    contentNode.style.padding = '4px 12px';
+    contentNode.style.borderRadius = '16px';
+    contentNode.style.fontWeight = 'bold';
+    contentNode.style.display = 'inline-block';
+    contentNode.style.textAlign = 'center';
+
+    if (isApplied) {
+      contentNode.style.backgroundColor = '#d4edda';
+      contentNode.style.color = '#155724';
+    }
+  }
+
+  // 2. Highlight deadline independently
+  if (deadlineCell) {
     const deadlineText = deadlineCell.textContent.trim(); 
     const parsedDate = new Date(deadlineText.replace(',', ''));
     
-    if (!isNaN(parsedDate)) {
+    if (!isNaN(parsedDate.getTime())) {
       const hoursLeft = (parsedDate - new Date()) / (1000 * 60 * 60);
+      const targetNode = deadlineCell.querySelector('.MuiDataGrid-cellContent') || deadlineCell;
+      targetNode.style.padding = '3px 8px';
+      targetNode.style.borderRadius = '6px';
+      targetNode.style.fontWeight = '600';
+      targetNode.style.display = 'inline-block';
       
       if (hoursLeft < 0) {
         // Deadline Passed
-        contentNode.style.backgroundColor = '#e9ecef';
-        contentNode.style.color = '#6c757d';
+        targetNode.style.backgroundColor = '#e9ecef';
+        targetNode.style.color = '#6c757d';
       } else if (hoursLeft < 24) {
         // Critical (Red)
-        contentNode.style.backgroundColor = '#f8d7da';
-        contentNode.style.color = '#721c24';
+        targetNode.style.backgroundColor = '#f8d7da';
+        targetNode.style.color = '#721c24';
       } else if (hoursLeft < 72) {
         // Warning (Orange)
-        contentNode.style.backgroundColor = '#fff3cd';
-        contentNode.style.color = '#856404';
+        targetNode.style.backgroundColor = '#fff3cd';
+        targetNode.style.color = '#856404';
       } else {
         // Plenty of time
-        contentNode.style.backgroundColor = '#f8f9fa';
-        contentNode.style.color = '#333';
+        targetNode.style.backgroundColor = 'transparent';
+        targetNode.style.color = 'inherit';
       }
     }
   }
@@ -2057,7 +3355,7 @@ function highlightDeadlineAndApplied(row) {
 
 // 5. Auto-Remove Eligibility Filter
 async function removeEligibilityFilter() {
-  const filterBtn = document.querySelector('button[aria-label="Show filters"]');
+  const filterBtn = document.querySelector('button[aria-label="Show filters"], button[aria-label*="filter" i], button[title*="filter" i]');
   if (!filterBtn) return false;
 
   const isFilterPanelOpen = () => document.querySelector('.MuiDataGrid-filterForm');

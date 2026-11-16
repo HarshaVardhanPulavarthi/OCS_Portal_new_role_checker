@@ -65,12 +65,18 @@ A dedicated, dual-column priority notepad docked right inside the portal:
 
 ---
 
-### 7. 🔍 Scraper, New Role Detection & Notifications
-- **Direct 1-Click Scan from Bottom Dock**: Hit `⚡ Scan Roles` right in the centered macOS dock without having to open the popup.
+### 7. 🔍 Scraper, New Role Detection & Floating List
+- **Direct 1-Click Scan from Bottom Dock**: Hit `⚡ Check New Companies` right in the centered macOS dock without having to open the popup.
+- **Interactive New Companies Floating List**: When new roles are discovered, an interactive list card automatically pops up directly above the task bar displaying:
+  - **Company & Role details**: Company name, job title, CTC package badge, and application deadline.
+  - **Quick-Add to Notepad**: `⭐ +Top` and `👍 +Decent` 1-click buttons to immediately prioritize companies into your Notepad.
+  - **Table Highlighter (`🔍 View`)**: Smoothly scrolls to and highlights the company row in the portal table.
+  - **Direct JD Link (`🔗 JD`)**: Opens the role details page directly in a new tab.
+  - **Search & Filter**: Real-time filter bar when multiple new companies are found.
 - **Live Progress Feedback**: Button updates in real-time (`🔄 Filters...`, `🔄 page 1...`, `🔄 Comparing...`) as virtual scroller pages are read.
 - **Instant Result & Save**:
-  - **No New Roles**: Flashes `✓ Up to date` in soft emerald green.
-  - **New Roles Found**: Turns into a glowing `🎉 X New! (Save DB)` pill button. Click once to update your local database snapshot.
+  - **No New Roles**: Displays `✓ Up to date` popover card above the task bar.
+  - **New Roles Found**: Displays glowing `🎉 X New! (Save DB)` and the floating list card with 1-click database save buttons.
 - **Automated VirtualScroller Scraper**: Transparently iterates through all pages and virtual DOM rows in the MUI DataGrid.
 - **Smart Comparison Engine**: Normalizes role titles and company names to compare current portal listings with your saved database.
 - **Desktop Notifications**: Triggers native Chrome alerts displaying newly added company names, job profiles, and CTC packages.
